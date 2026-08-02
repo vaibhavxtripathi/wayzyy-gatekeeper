@@ -3,11 +3,12 @@
  *
  * Cost-descending cascade (SPEC §0): free deterministic tiers resolve the vast
  * majority of messages; only borderline traffic escalates. Tiers land in build
- * order (SPEC §12) — Tiers 1-4 are in place; Tier 5 arrives at step 8.
+ * order (SPEC §12) — all five tiers are in place.
  */
 
 import { now } from "./clock.js";
 import { classify, type ClassifierModel } from "./classifier/index.js";
+import { Adjudicator, applyFailMode, type AdjudicationResult } from "./llm/index.js";
 import { runDetectors } from "./detectors/index.js";
 import { normalize } from "./normalize/index.js";
 import { RiskEngine, bandFor, type Band } from "./risk/index.js";
@@ -37,6 +38,11 @@ export interface ModerateOptions {
   classifierModel?: ClassifierModel;
   /** Tier 3 weights and bands. Defaults to DEFAULT_RISK_CONFIG. */
   config?: RiskConfig;
+  /**
+   * Tier 5 adjudicator (SPEC §8). Only consulted when Tier 4 is still
+   * uncertain. Requires the async entry points, since it performs I/O.
+   */
+  adjudicator?: Adjudicator;
   /** Injected clock, so tests and benchmarks are deterministic. */
   nowMs?: number;
 }
@@ -114,6 +120,57 @@ export function moderate(req: ModerateRequest, options: ModerateOptions = {}): M
 }
 
 /**
+ * Stateless moderation with Tier 5 (SPEC §8).
+ *
+ * Same as `moderate`, but async so the adjudicator can be consulted when
+ * Tiers 1-4 leave the message unresolved. Use this when there is no
+ * conversation history to draw on; `moderateStateful` when there is.
+ */
+export async function moderateAsync(
+  req: ModerateRequest,
+  options: ModerateOptions = {},
+): Promise<ModerateResult> {
+  const config = options.config ?? DEFAULT_RISK_CONFIG;
+  const sync = moderate(req, options);
+
+  // Only `review` can still be improved by Tier 5; everything else is settled.
+  if (sync.verdict !== "review" || options.adjudicator === undefined) return sync;
+
+  const started = now();
+  const views = normalize(req.text);
+  const tier5 = await options.adjudicator.adjudicate(views.folded, req.text);
+
+  if (tier5.verdict !== null) {
+    const flagged = tier5.verdict.contact || tier5.verdict.safety;
+    return {
+      ...sync,
+      verdict: flagged ? "block" : "allow",
+      resolved_by: tier5.source === "cache" ? "cache" : "tier5.llm",
+      signals: {
+        ...sync.signals,
+        llm_source: tier5.source,
+        llm_contact: tier5.verdict.contact,
+        llm_safety: tier5.verdict.safety,
+        llm_confidence: tier5.verdict.confidence,
+      },
+      latency_ms: sync.latency_ms + (now() - started),
+      cost_usd: tier5.costUsd,
+    };
+  }
+
+  // No verdict — apply the SPEC §2 failure policy.
+  const failVerdict = applyFailMode(req.booking_stage, config.failMode);
+  return {
+    ...sync,
+    verdict: failVerdict === "block" ? "block" : "review",
+    resolved_by: "tier5.llm",
+    signals: { ...sync.signals, llm_source: tier5.source, llm_error: tier5.error },
+    latency_ms: sync.latency_ms + (now() - started),
+    cost_usd: 0,
+  };
+}
+
+/**
  * Stateful moderation: Tiers 1-3 with relationship-level accumulation,
  * windowed re-scan and cross-message fragment merging (SPEC §6).
  */
@@ -164,6 +221,17 @@ export async function moderateStateful(
         )
       : null;
 
+  // Tier 5 runs only where Tier 4 is still uncertain — or where Tier 4 is
+  // absent entirely and Tier 3 escalated. That is the ~0-2% of traffic the
+  // whole cascade exists to shrink (SPEC §8).
+  const needsAdjudication =
+    assessment.band === "escalate" && (tier4 === null || tier4.decision === "escalate");
+
+  const tier5 =
+    needsAdjudication && options.adjudicator !== undefined
+      ? await options.adjudicator.adjudicate(views.folded, req.text)
+      : null;
+
   return buildResult({
     band: assessment.band,
     detections: [...detections, ...assessment.rescanDetections],
@@ -173,6 +241,9 @@ export async function moderateStateful(
     breakdown: assessment.breakdown,
     started,
     tier4,
+    tier5,
+    failMode: config.failMode,
+    stage: req.booking_stage,
     extraSignals: {
       digit_pressure: round(assessment.state.digitPressure),
       session_intent_hits: assessment.state.intentHits,
@@ -197,12 +268,18 @@ interface BuildResultInput {
   started: number;
   /** Tier 4 output, present only when Tier 3 escalated (SPEC §7). */
   tier4?: ReturnType<typeof classify> | null;
+  /** Tier 5 output, present only when Tier 4 was still uncertain (SPEC §8). */
+  tier5?: AdjudicationResult | null;
+  /** Fail-open/closed policy, applied when Tier 5 produced no verdict. */
+  failMode?: Record<import("./types.js").BookingStage, "open" | "closed">;
+  stage?: import("./types.js").BookingStage;
   extraSignals?: Record<string, unknown>;
 }
 
 function buildResult(input: BuildResultInput): ModerateResult {
   const { band, detections, intentHits, views, weirdness, breakdown, started } = input;
   const tier4 = input.tier4 ?? null;
+  const tier5 = input.tier5 ?? null;
 
   const categories: Category[] = [...new Set(detections.map((d) => d.type))];
   const spans: Span[] = detections.map((d) => ({
@@ -252,6 +329,23 @@ function buildResult(input: BuildResultInput): ModerateResult {
       verdict = tier4.decision === "block" ? "block" : "allow";
       resolvedBy = "tier4.classifier";
     }
+  } else if (tier5 !== null) {
+    // --- Tier 5 (SPEC §8) --------------------------------------------------
+    if (tier5.verdict !== null) {
+      const flagged = tier5.verdict.contact || tier5.verdict.safety;
+      verdict = flagged ? "block" : "allow";
+      resolvedBy = tier5.source === "cache" ? "cache" : "tier5.llm";
+    } else {
+      // No verdict: timeout or error. SPEC §2 failure policy — pre_booking
+      // fails CLOSED, post_booking fails OPEN. Sync callers additionally see
+      // `review` so a human can look, rather than a silent block.
+      const failVerdict =
+        input.failMode !== undefined && input.stage !== undefined
+          ? applyFailMode(input.stage, input.failMode)
+          : "review";
+      verdict = failVerdict === "block" ? "block" : "review";
+      resolvedBy = "tier5.llm";
+    }
   } else {
     verdict = "review";
     resolvedBy = tier4 !== null ? "tier4.classifier" : "tier3.risk";
@@ -282,10 +376,26 @@ function buildResult(input: BuildResultInput): ModerateResult {
       ...(tier4 !== null
         ? { classifier_p: round(tier4.probability), classifier_decision: tier4.decision }
         : {}),
+      ...(tier5 !== null
+        ? {
+            llm_source: tier5.source,
+            llm_latency_ms: round(tier5.latencyMs),
+            ...(tier5.verdict !== null
+              ? {
+                  llm_contact: tier5.verdict.contact,
+                  llm_contact_type: tier5.verdict.contact_type,
+                  llm_safety: tier5.verdict.safety,
+                  llm_safety_type: tier5.verdict.safety_type,
+                  llm_confidence: tier5.verdict.confidence,
+                }
+              : {}),
+            ...(tier5.error !== undefined ? { llm_error: tier5.error } : {}),
+          }
+        : {}),
       ...(input.extraSignals ?? {}),
     },
     latency_ms: now() - started,
-    cost_usd: 0,
+    cost_usd: tier5?.costUsd ?? 0,
   };
 }
 
@@ -297,6 +407,23 @@ export { normalize } from "./normalize/index.js";
 export { runDetectors } from "./detectors/index.js";
 export { messageWeirdness, scoreToken, percentile } from "./weirdness/index.js";
 export { classify, predictProbability, extractFeatures } from "./classifier/index.js";
+export {
+  Adjudicator,
+  LruCache,
+  cacheKey,
+  parseVerdict,
+  buildUserPrompt,
+  applyFailMode,
+  SYSTEM_PROMPT,
+  GROQ_PRICING,
+} from "./llm/index.js";
+export type {
+  AdjudicationResult,
+  AdjudicationVerdict,
+  LlmTransport,
+  LlmRequest,
+  LlmResponse,
+} from "./llm/index.js";
 export type { ClassifierModel, ClassifierResult, FeatureInput } from "./classifier/index.js";
 export type { TrigramModel, MessageWeirdness, TokenScore } from "./weirdness/index.js";
 export * from "./risk/index.js";

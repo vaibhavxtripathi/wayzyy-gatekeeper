@@ -10,7 +10,8 @@
     "train:trigrams": "tsx scripts/train-trigrams.ts",
     "build:corpus": "tsx scripts/build-corpus.ts",
     "bench": "tsx scripts/run-benchmark.ts",
-    "train:classifier": "tsx scripts/train-classifier.ts"
+    "train:classifier": "tsx scripts/train-classifier.ts",
+    "mine:rules": "tsx scripts/mine-rules.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
