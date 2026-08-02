@@ -75,7 +75,9 @@ export default function App(): JSX.Element {
     if (seeded.current) return;
     seeded.current = true;
     void (async () => {
-      await send("hi, is the place available next weekend?", "guest", "pre_booking");
+      // One innocent message and one evasion, so the first screen shows both
+      // outcomes rather than only what gets stopped.
+      await send("the villa is ₹98,765 for 5 nights, 4 adults 2 kids", "host", "pre_booking");
       await send(PRESETS[0]!.text, "guest", "pre_booking");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

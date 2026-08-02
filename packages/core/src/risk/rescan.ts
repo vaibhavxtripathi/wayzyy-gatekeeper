@@ -55,12 +55,17 @@ export function mergeFragments(
       const digits = slice.map((f) => f.run.digits).join("");
       if (digits.length < 10) continue;
 
-      // Only the leading 10 digits can form an IN mobile; a longer string may
-      // carry a country prefix.
+      // A phone number is 10 digits, or 12 with a country code. Anything
+      // longer is not "a number with extra bits" — it is proof the merge is
+      // wrong. Without this ceiling, one real number in the buffer glued
+      // itself to every later price, flight number and clock time, producing
+      // 20+ digit strings that still "validated" because only the leading 10
+      // were checked. Every subsequent message containing any digit then
+      // blocked.
+      if (digits.length > 12) continue;
+
       const validPhone =
-        IN_MOBILE_RE.test(digits) ||
-        IN_MOBILE_RE.test(digits.slice(0, 10)) ||
-        /^91[6-9]\d{9}$/.test(digits);
+        IN_MOBILE_RE.test(digits) || /^91[6-9]\d{9}$/.test(digits);
 
       results.push({
         digits,

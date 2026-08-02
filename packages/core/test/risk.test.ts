@@ -520,6 +520,61 @@ describe("cross-message evidence is reported separately", () => {
 
     expect(result.categories).toContain("intent.offplatform");
     expect(result.categories).not.toContain("contact.phone");
-    expect(result.signals["cross_message_categories"]).toContain("contact.phone");
+  });
+
+  /**
+   * A number contained entirely within ONE earlier message is not
+   * cross-boundary evidence — it was caught on its own turn. Re-charging it
+   * to every later message scored innocent prices and flight numbers at full
+   * validPhone weight and blocked them at 13+.
+   */
+  it("does not re-charge an earlier message's own number to later messages", async () => {
+    const store = new MemorySessionStore();
+    await moderateStateful(req("my number is 9876543210"), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+
+    for (const text of [
+      "the villa is ₹98,765 for 5 nights, 4 adults 2 kids",
+      "flight 6E 2134 lands 9:40, can I check in at 2?",
+      "pin code 403507",
+      "the gate code is 4455",
+    ]) {
+      const result = await moderateStateful(req(text, { message_id: `m_${text}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + 60_000,
+      });
+      expect(result.verdict, text).toBe("allow");
+    }
+  });
+
+  /**
+   * Merging must not concatenate unrelated digits into a fake number. One
+   * real number in the buffer glued itself to every later price, flight
+   * number and clock time, producing 20+ digit strings that still validated
+   * because only the leading 10 digits were checked.
+   */
+  it("never fabricates an over-length number from unrelated digits", async () => {
+    const store = new MemorySessionStore();
+    const texts = [
+      "my number is 9876543210",
+      "the villa is ₹98,765 for 5 nights, 4 adults 2 kids",
+      "flight 6E 2134 lands 9:40, can I check in at 2?",
+    ];
+
+    for (const [i, text] of texts.entries()) {
+      const result = await moderateStateful(req(text, { message_id: `m${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+      const merged = result.signals["merged_fragments"];
+      if (typeof merged === "string") {
+        expect(merged.length, `${text} -> ${merged}`).toBeLessThanOrEqual(12);
+      }
+    }
   });
 });

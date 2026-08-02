@@ -22,6 +22,11 @@ import { normalize } from "../normalize/index.js";
 import { messageWeirdness, type TrigramModel } from "../weirdness/index.js";
 import type { Detection, ModerateRequest, NormalizedViews } from "../types.js";
 
+/** A run that stands alone as a valid number, so it needs no reassembly. */
+function isCompletePhone(digits: string): boolean {
+  return /^[6-9]\d{9}$/.test(digits) || /^91[6-9]\d{9}$/.test(digits);
+}
+
 export interface AssessInput {
   request: ModerateRequest;
   views: NormalizedViews;
@@ -90,9 +95,21 @@ export class RiskEngine {
     if (rescanText !== null) {
       const rescanViews = normalize(rescanText);
       const rescanResult = runDetectors(rescanViews);
-      // Keep only what the per-message pass did not already find: the whole
-      // point is detections that exist ONLY across the message boundary.
+
+      // A detection that any SINGLE message already produces on its own is
+      // not a cross-boundary find — it was caught on its own turn and must
+      // not be re-charged to this one. Without this, an earlier
+      // "my number is 9876543210" was re-detected in every later message's
+      // re-scan window and scored at full validPhone weight, so an innocent
+      // price or flight number blocked at 13+.
       const seen = new Set(detections.map((d) => d.type));
+      for (const remembered of state.lastMessages) {
+        if (remembered.sender !== request.sender_role) continue;
+        for (const d of runDetectors(normalize(remembered.text)).detections) {
+          seen.add(d.type);
+        }
+      }
+
       for (const detection of rescanResult.detections) {
         if (seen.has(detection.type)) continue;
         if (!detection.type.startsWith("contact.")) continue;
@@ -110,11 +127,18 @@ export class RiskEngine {
       session.fragmentWindowMs,
       session.fragmentBufferSize,
     );
-    const currentFragments = views.digitRuns.map((run) => ({
-      run,
-      timestamp: nowMs,
-      sender: request.sender_role,
-    }));
+    // A run that is ALREADY a complete valid number does not belong in the
+    // fragment buffer. Merging exists to reassemble numbers split across
+    // messages; a whole number is caught by Tier 2 on its own turn, and
+    // keeping it around only lets it glue onto later prices and flight
+    // numbers to manufacture matches nobody sent.
+    const currentFragments = views.digitRuns
+      .filter((run) => !isCompletePhone(run.digits))
+      .map((run) => ({
+        run,
+        timestamp: nowMs,
+        sender: request.sender_role,
+      }));
     const allFragments = [...fragments, ...currentFragments];
 
     const merged = mergeFragments(
