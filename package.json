@@ -7,7 +7,9 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "train:trigrams": "tsx scripts/train-trigrams.ts"
+    "train:trigrams": "tsx scripts/train-trigrams.ts",
+    "build:corpus": "tsx scripts/build-corpus.ts",
+    "bench": "tsx scripts/run-benchmark.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

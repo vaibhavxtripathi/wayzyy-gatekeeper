@@ -101,6 +101,17 @@ export const AMBIGUOUS_WORDS = new Set([
   "tin",
 ]);
 
+/**
+ * The most dangerous subset: extremely common English words that also mean a
+ * digit in Hinglish. A single-digit neighbour is not enough evidence for these
+ * — "booking for 7 people" and "house no 1" are ordinary sentences, and
+ * expanding them fabricates the runs "47" and "91".
+ *
+ * These require single-digit neighbours on BOTH sides, which is what a
+ * dictated sequence actually looks like ("... 9 for 5 ..." mid-number).
+ */
+export const HIGH_RISK_AMBIGUOUS = new Set(["for", "no", "to", "too", "do", "one", "ate", "che"]);
+
 export function isNumWord(token: string): boolean {
   return Object.prototype.hasOwnProperty.call(NUM_WORDS, token);
 }

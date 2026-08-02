@@ -38,6 +38,15 @@ export const INTENT_OFFPLATFORM = [
   "cheaper direct", "better price direct", "direct me sasta",
   "cancel here and", "cancel the booking and", "cancel and book",
   "next time direct", "agli baar direct", "seedha book",
+  // Phrasings the benchmark showed leaking: the same disintermediation intent
+  // expressed without the exact words already in the list.
+  "contact me directly", "contact me direct", "reach me directly",
+  "message me directly", "deal directly", "work directly",
+  "avoid the commission", "avoid the platform", "avoid the app",
+  "skip the app", "skip the platform", "bypass the app",
+  "without the platform", "outside the platform",
+  "save the fee", "save the commission", "no platform fee",
+  "cut out the middleman", "middleman hata do",
 ];
 
 export const INTENT_PAYMENT = [

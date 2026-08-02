@@ -152,6 +152,25 @@ describe("digit run merging", () => {
     expect(extractDigitRuns("nine eight one six zero")[0]?.digits).toBe("98160");
   });
 
+  it("does not read common English words as digits next to a lone number", () => {
+    // "for"/"no" are digits in Hinglish but ordinary English words. A single
+    // digit neighbour is not enough evidence — these produced the phantom runs
+    // "47" and "91" and cost 24 false positives on the benchmark.
+    expect(extractDigitRuns("booking for 7 people")).toEqual([]);
+    expect(extractDigitRuns("house no 1, near the temple")).toEqual([]);
+    expect(extractDigitRuns("price for 4 nights is 23,774 rupees").map((r) => r.digits)).toEqual([
+      "23774",
+    ]);
+  });
+
+  it("expands devanagari number-words with vowel signs", () => {
+    // Devanagari maatras are combining marks (\p{M}), not letters, so
+    // stripping on \p{L} alone turned "पांच" into "पच" and silently broke
+    // every Devanagari number-word — 68% of that technique leaked.
+    const runs = extractDigitRuns("सात दो तीन छह एक पांच पांच चार नौ पांच");
+    expect(runs[0]?.digits).toBe("7236155495");
+  });
+
   it("marks pure-numeral runs as not mixed-form", () => {
     const run = extractDigitRuns("9876543210")[0]!;
     expect(run.mixedForm).toBe(false);

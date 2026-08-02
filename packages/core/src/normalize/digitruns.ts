@@ -7,7 +7,7 @@
  * highest-value signal this stage produces.
  */
 
-import { AMBIGUOUS_WORDS, MULTIPLIERS, NUM_WORDS } from "./numwords.js";
+import { AMBIGUOUS_WORDS, HIGH_RISK_AMBIGUOUS, MULTIPLIERS, NUM_WORDS } from "./numwords.js";
 import type { DigitRun, SeparatorType } from "../types.js";
 
 interface Token {
@@ -27,6 +27,8 @@ interface Chunk {
   sepBefore: string;
   /** Ambiguous words only count once anchored by a neighbouring chunk. */
   ambiguous: boolean;
+  /** Ambiguous AND an extremely common English word; needs both neighbours. */
+  highRisk: boolean;
 }
 
 const SEPARATOR_CHARS = /[\s_\-.,;:]/u;
@@ -82,12 +84,16 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         end: token.end,
         sepBefore: token.sepBefore,
         ambiguous: false,
+        highRisk: false,
       },
     ];
   }
 
   // Number-word token, e.g. "nine", "paanch", "नौ".
-  const stripped = lower.replace(/[^\p{L}]/gu, "");
+  // \p{M} matters: Devanagari vowel signs (मात्रा) are combining marks, not
+  // letters, so stripping on \p{L} alone turns "पांच" into "पच" and every
+  // Devanagari number-word silently fails to match.
+  const stripped = lower.replace(/[^\p{L}\p{M}]/gu, "");
   const word = NUM_WORDS[stripped];
   if (word !== undefined) {
     const digits = multiplier ? word.repeat(multiplier) : word;
@@ -99,6 +105,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         end: token.end,
         sepBefore: token.sepBefore,
         ambiguous: AMBIGUOUS_WORDS.has(stripped),
+        highRisk: HIGH_RISK_AMBIGUOUS.has(stripped),
       },
     ];
   }
@@ -119,6 +126,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         end: token.end,
         sepBefore: token.sepBefore,
         ambiguous: AMBIGUOUS_WORDS.has(letterPart),
+        highRisk: HIGH_RISK_AMBIGUOUS.has(letterPart),
       });
     }
     if (digitPart.length > 0) {
@@ -129,6 +137,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         end: token.end,
         sepBefore: chunks.length > 0 ? "" : token.sepBefore,
         ambiguous: false,
+        highRisk: false,
       });
     }
     if (chunks.length > 0) return chunks;
@@ -204,8 +213,21 @@ export function extractDigitRuns(text: string, options: ExtractOptions = {}): Di
       let accepted = true;
 
       if (chunk.ambiguous) {
-        const neighbours = [chunks[i - 1], chunks[i + 1]].filter((n) => n !== undefined);
+        const prev = chunks[i - 1];
+        const next = chunks[i + 1];
+        const neighbours = [prev, next].filter((n) => n !== undefined);
         accepted = neighbours.length > 0 && neighbours.every((n) => n!.digits.length === 1);
+
+        // High-risk words ("for", "no", "one") need single-digit neighbours on
+        // BOTH sides. One is not enough: "booking for 7 people" and "house no
+        // 1" are ordinary sentences that would otherwise yield 47 and 91.
+        if (accepted && chunk.highRisk) {
+          accepted =
+            prev !== undefined &&
+            next !== undefined &&
+            prev.digits.length === 1 &&
+            next.digits.length === 1;
+        }
       }
 
       if (accepted) {
@@ -221,7 +243,7 @@ export function extractDigitRuns(text: string, options: ExtractOptions = {}): Di
   let pendingMultiplier: number | null = null;
 
   for (const token of tokens) {
-    const lower = token.text.toLowerCase().replace(/[^\p{L}]/gu, "");
+    const lower = token.text.toLowerCase().replace(/[^\p{L}\p{M}]/gu, "");
 
     // "double"/"triple" latch onto the next digit chunk.
     const mult = MULTIPLIERS[lower];

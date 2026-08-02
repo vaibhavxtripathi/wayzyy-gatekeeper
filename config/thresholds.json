@@ -13,12 +13,13 @@
     "riskyUrl": 3.2,
     "digitPressure": 0.35,
     "zeroWidthCount": 0.8,
+    "offPlatformFloor": 3.6,
     "email": 8.5,
     "confusablesFolded": 0.4
   },
   "safetyWeights": {
     "$comment": "Safety is scored separately from contact: it must not be relaxed post-booking.",
-    "hostilitySev1": 1.0,
+    "hostilitySev1": 3.5,
     "hostilitySev2": 4.0,
     "hostilitySev3": 9.0,
     "extortion": 8.0,

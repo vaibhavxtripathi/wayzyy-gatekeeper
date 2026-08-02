@@ -32,7 +32,7 @@ const PLATFORM_HANDLE_RE =
 
 /** "same handle as my name" style pointers — intent without a literal handle. */
 const IMPLICIT_HANDLE_RE =
-  /\b(?:same\s+(?:handle|username|id|name)\s+as|handle\s+is\s+my\s+name|username\s+is\s+my\s+name|search\s+my\s+name\s+on)\b/gi;
+  /\b(?:(?:handle|username|user\s*id|id|name)\s+(?:is\s+)?(?:the\s+)?same\s+as\s+my\s+\w+|same\s+(?:handle|username|id|name)\s+as|(?:handle|username|id)\s+is\s+my\s+name|search\s+(?:for\s+)?my\s+name\s+on|find\s+me\s+by\s+my\s+name)\b/gi;
 
 /** Words that follow a platform marker but are not handles. */
 const NOT_A_HANDLE = new Set([

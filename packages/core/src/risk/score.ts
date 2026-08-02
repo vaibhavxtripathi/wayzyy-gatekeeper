@@ -107,6 +107,18 @@ export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakd
     add("intentHits", value);
   }
 
+  // "book direct", "take this offline" carry no contact info at all, so they
+  // accumulate no other signal — yet they are exactly the disintermediation
+  // the product exists to stop. Without a floor they score below the allow
+  // band and are delivered untouched.
+  if (offPlatform > 0) {
+    const floor = w.offPlatformFloor - contact;
+    if (floor > 0) {
+      contact += floor;
+      add("offPlatformFloor", floor);
+    }
+  }
+
   // w7 · handle
   if (has("contact.handle")) {
     contact += w.handle;

@@ -20,6 +20,8 @@ export interface RiskWeights {
   riskyUrl: number;
   digitPressure: number;
   zeroWidthCount: number;
+  /** Minimum contact score for a pure off-platform-intent message. */
+  offPlatformFloor: number;
   email: number;
   confusablesFolded: number;
 }
@@ -76,11 +78,12 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
     riskyUrl: 3.2,
     digitPressure: 0.35,
     zeroWidthCount: 0.8,
+    offPlatformFloor: 3.6,
     email: 8.5,
     confusablesFolded: 0.4,
   },
   safetyWeights: {
-    hostilitySev1: 1.0,
+    hostilitySev1: 3.5,
     hostilitySev2: 4.0,
     hostilitySev3: 9.0,
     extortion: 8.0,

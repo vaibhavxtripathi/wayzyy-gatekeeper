@@ -40,7 +40,11 @@ export function detectIntent(views: NormalizedViews): Detection[] {
   // (unlike denoised) leaves word boundaries intact.
   const text = views.deleet;
 
-  const suppressed = negatives.search(text);
+  // Negative phrases are matched WITHOUT the whole-word requirement on the
+  // trailing edge, so "book direct flight" still suppresses inside "book
+  // direct flights". Ordinary inflections are the common case in real chat and
+  // an exact-form-only list would leak one false positive per plural.
+  const suppressed = negatives.search(text, false);
   const matches = keepLongest(automaton.search(text));
 
   const detections: Detection[] = [];
