@@ -40,6 +40,18 @@ const NOT_A_HANDLE = new Set([
   "group", "link", "profile", "page", "account", "story", "post", "reel",
   "please", "thanks", "hai", "hain", "kar", "karo", "par", "pe", "me", "on",
   "id", "handle", "username", "user", "is", "at",
+  // Ordinary verbs and connectives that follow a platform name in normal
+  // sentences. Without these, "someone messaged me on whatsapp claiming to be
+  // you" reads "claiming" as a handle — and a guest REPORTING a scam gets
+  // flagged for committing one.
+  "claiming", "pretending", "saying", "asking", "telling", "offering",
+  "instead", "about", "because", "before", "after", "today", "yesterday",
+  "tomorrow", "again", "already", "also", "but", "just", "not", "never",
+  "was", "were", "said", "says", "sent", "sends", "got", "get", "gets",
+  "from", "with", "that", "this", "they", "them", "then", "when", "where",
+  "which", "would", "could", "should", "some", "someone", "somebody",
+  "anyone", "anybody", "everyone", "nobody", "myself", "yourself",
+  "number", "numbers", "contact", "contacts", "details", "info",
 ]);
 
 export function detectHandle(views: NormalizedViews): Detection[] {

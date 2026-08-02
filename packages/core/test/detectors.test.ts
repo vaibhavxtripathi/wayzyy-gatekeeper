@@ -273,3 +273,21 @@ describe("hard negatives stay clean", () => {
     });
   }
 });
+
+describe("handle detector does not read ordinary words as handles", () => {
+  it("ignores verbs and connectives after a platform name", () => {
+    // "whatsapp claiming" was matching as a platform-prefixed handle, which
+    // flagged a guest reporting a scam.
+    for (const text of [
+      "someone messaged me on whatsapp claiming to be you",
+      "they contacted me on instagram asking for money",
+      "he sent a message on telegram saying he was the host",
+    ]) {
+      expect(hasType(text, "contact.handle"), text).toBe(false);
+    }
+  });
+
+  it("still catches a real handle after a platform name", () => {
+    expect(hasType("find me on instagram akshay_travels", "contact.handle")).toBe(true);
+  });
+});

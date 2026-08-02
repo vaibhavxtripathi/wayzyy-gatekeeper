@@ -81,6 +81,7 @@ export function moderate(req: ModerateRequest, options: ModerateOptions = {}): M
       sessionIntentHits: 0,
       role: req.sender_role,
       stage: req.booking_stage,
+      text: views.folded,
     },
     config,
   );

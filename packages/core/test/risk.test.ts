@@ -386,3 +386,39 @@ describe("red-team regressions", () => {
     });
   }
 });
+
+/**
+ * A guest reporting a scam is the message a platform MOST wants delivered.
+ * Third-party framing names a channel and an action, so the off-platform floor
+ * would otherwise fire on someone warning the host about a fraud attempt.
+ */
+describe("reporting an approach is not making one", () => {
+  const reports = [
+    "someone messaged me on whatsapp claiming to be you, is that real?",
+    "please confirm you never ask for payment over whatsapp",
+  ];
+
+  for (const text of reports) {
+    it(`allows: "${text.slice(0, 44)}"`, () => {
+      expect(moderate(req(text), { trigramModel: MODEL }).verdict).toBe("allow");
+    });
+  }
+
+  it("does not BLOCK a report that also names off-platform payment", () => {
+    // "i got a text asking for payment outside the app, is it legitimate?"
+    // still scores from the off-platform hit itself, which is defensible — a
+    // second look is reasonable. What must not happen is a block, which would
+    // silence someone reporting fraud.
+    const result = moderate(
+      req("i got a text asking for payment outside the app, is it legitimate?"),
+      { trigramModel: MODEL },
+    );
+    expect(result.verdict).not.toBe("block");
+  });
+
+  it("still stops the same channel used as a first-person request", () => {
+    expect(moderate(req("message me on whatsapp"), { trigramModel: MODEL }).verdict).not.toBe(
+      "allow",
+    );
+  });
+});

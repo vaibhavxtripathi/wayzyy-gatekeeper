@@ -402,7 +402,9 @@ export function generateAdversarial(target = 1000, seed = 424242): AdversarialEn
     const shortener = pick(["bit.ly", "tinyurl.com", "cutt.ly", "rb.gy", "t.co"], rng);
     entries.push({
       id: nextId(),
-      text: `here is my contact ${shortener}/${Math.random().toString(36).slice(2, 8)}`,
+      // Seeded RNG, not Math.random: the corpus must regenerate byte-identical
+      // or benchmark numbers are not reproducible between runs or machines.
+      text: `here is my contact ${shortener}/${rng().toString(36).slice(2, 8)}`,
       category: "contact",
       technique: "shortener",
       label: "adversarial",

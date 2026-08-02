@@ -24,6 +24,9 @@ export interface ScoreInput {
   sessionIntentHits: number;
   role: SenderRole;
   stage: BookingStage;
+  /** Folded text, used only for framing checks. Optional for callers that
+   *  score detections alone. */
+  text?: string;
 }
 
 export interface ScoreBreakdown {
@@ -38,6 +41,28 @@ export interface ScoreBreakdown {
   stageModifier: number;
   roleModifier: number;
 }
+
+/**
+ * Third-party framing: the sender is describing someone ELSE's off-platform
+ * approach, or asking whether one is legitimate. Reporting a scam must not be
+ * treated as committing one.
+ */
+const REPORT_FRAMING = new RegExp(
+  [
+    // "someone messaged me on whatsapp…", "a stranger called me…"
+    String.raw`\b(?:someone|somebody|a person|another guest|another host|some guy|this guy|a stranger|scammer|fraudster|fraud)\b[^.?!]{0,60}\b(?:messaged|contacted|called|texted|dmed|dmd|dm|reached out|approached|asked|sent)\b`,
+    // "…is that real?", "…are they you?"
+    String.raw`\b(?:is that|is this|are they|was that)\s+(?:real|legit|genuine|actually you|you)\b`,
+    // impersonation and policy-confirmation framings
+    String.raw`\bclaiming to be\b`,
+    String.raw`\bpretending to be\b`,
+    String.raw`\bnever ask(?:s|ed)? for\b`,
+    String.raw`\bis it legitimate\b`,
+    String.raw`\bis this a scam\b`,
+    String.raw`\bi got a (?:text|message|call|dm)\b`,
+  ].join("|"),
+  "i",
+);
 
 export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakdown {
   const w = config.weights;
@@ -126,8 +151,15 @@ export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakd
       /\b(?:send|give|share|drop|have|whats|what is|bhej|de do)\b/.test(d.evidence),
   );
 
+  // A guest REPORTING an off-platform approach ("someone messaged me on
+  // whatsapp claiming to be you") names a channel and an action, but is
+  // warning the host rather than soliciting contact — and is exactly the
+  // message a platform most wants delivered. Third-party framing suppresses
+  // the floor; the underlying detections still score normally.
+  const isReport = REPORT_FRAMING.test(input.text ?? "");
+
   const channelPlusAction = count("intent.channel") > 0 && count("intent.contact") > 0;
-  if (offPlatform > 0 || channelPlusAction || asksForNumber) {
+  if (!isReport && (offPlatform > 0 || channelPlusAction || asksForNumber)) {
     const floor = w.offPlatformFloor - contact;
     if (floor > 0) {
       contact += floor;

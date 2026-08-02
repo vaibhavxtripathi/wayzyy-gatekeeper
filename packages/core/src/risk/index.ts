@@ -133,6 +133,7 @@ export class RiskEngine {
         sessionIntentHits: state.intentHits,
         role: request.sender_role,
         stage: request.booking_stage,
+        text: views.folded,
       },
       this.config,
     );
