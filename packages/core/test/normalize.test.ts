@@ -1,0 +1,156 @@
+import { describe, expect, it } from "vitest";
+
+import { denoiseToken, extractDigitRuns, normalize } from "../src/normalize/index.js";
+
+/**
+ * SPEC §3 requires BOTH Wayzyy benchmark strings to pass before anything else
+ * is built. These two blocks are that gate.
+ */
+describe("benchmark string #1 — noise injection + mixed-form number", () => {
+  const INPUT = "hi i a92m a121ksh35ay call me on nine eight 7 six zero";
+  const views = normalize(INPUT);
+
+  it("denoises interior noise digits to recover the plain text", () => {
+    expect(views.denoised).toBe("hi i am akshay call me on nine eight 7 six zero");
+  });
+
+  it("counts exactly 7 noise digits removed", () => {
+    // a92m → am (+2), a121ksh35ay → akshay (+5). The standalone "7" in the
+    // spoken number is a candidate, not noise, so it must NOT be counted.
+    expect(views.signals.noiseDigitsRemoved).toBe(7);
+  });
+
+  it("extracts the mixed-form digit run 98760", () => {
+    const run = views.digitRuns.find((r) => r.digits === "98760");
+    expect(run).toBeDefined();
+    expect(run!.mixedForm).toBe(true);
+  });
+
+  it("preserves the intent word 'call' through normalization", () => {
+    expect(views.denoised).toContain("call");
+    expect(views.deleet).toContain("call");
+  });
+});
+
+describe("benchmark string #2 — handle smuggling with separator + word tail", () => {
+  const INPUT = "reach out at insta: akshay_98_76_five_four";
+  const views = normalize(INPUT);
+
+  it("extracts the digit run 987654 across underscores and word forms", () => {
+    const run = views.digitRuns.find((r) => r.digits === "987654");
+    expect(run).toBeDefined();
+  });
+
+  it("records underscore separators and a word-form tail", () => {
+    const run = views.digitRuns.find((r) => r.digits === "987654")!;
+    expect(run.separatorTypes).toContain("underscore");
+    expect(run.wordFormCount).toBeGreaterThan(0);
+    expect(run.numeralCount).toBeGreaterThan(0);
+    expect(run.mixedForm).toBe(true);
+  });
+
+  it("keeps the platform marker and handle stem visible for Tier 2", () => {
+    expect(views.folded).toContain("insta");
+    expect(views.denoised).toContain("akshay");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Supporting behaviour
+// ---------------------------------------------------------------------------
+
+describe("denoiseToken", () => {
+  it("removes interior digit runs with letters on both sides", () => {
+    expect(denoiseToken("a92m")).toEqual({ text: "am", noiseDigitsRemoved: 2 });
+    expect(denoiseToken("a121ksh35ay")).toEqual({ text: "akshay", noiseDigitsRemoved: 5 });
+  });
+
+  it("keeps digits at token boundaries", () => {
+    expect(denoiseToken("iphone15")).toEqual({ text: "iphone15", noiseDigitsRemoved: 0 });
+    expect(denoiseToken("15pro")).toEqual({ text: "15pro", noiseDigitsRemoved: 0 });
+  });
+
+  it("never touches purely numeric tokens", () => {
+    expect(denoiseToken("98765")).toEqual({ text: "98765", noiseDigitsRemoved: 0 });
+    expect(denoiseToken("403507")).toEqual({ text: "403507", noiseDigitsRemoved: 0 });
+  });
+
+  it("keeps interior runs longer than 3 digits (likely real content)", () => {
+    expect(denoiseToken("abc12345def").noiseDigitsRemoved).toBe(0);
+  });
+});
+
+describe("unicode handling", () => {
+  it("NFKC-folds fullwidth and math-bold digits", () => {
+    expect(normalize("call ９８７６").denoised).toContain("9876");
+    expect(normalize("call 𝟗𝟖𝟕𝟔").denoised).toContain("9876");
+  });
+
+  it("maps devanagari digits by unicode digit value", () => {
+    const views = normalize("mera number ९८७६० hai");
+    expect(views.folded).toContain("98760");
+  });
+
+  it("strips zero-width characters and counts them", () => {
+    const views = normalize("9​8​7​6​0");
+    expect(views.signals.zeroWidthCount).toBe(4);
+    expect(views.digitRuns[0]?.digits).toBe("98760");
+  });
+
+  it("folds cyrillic confusables to ascii", () => {
+    const views = normalize("whаtsаpp me"); // cyrillic а
+    expect(views.folded).toContain("whatsapp");
+    expect(views.signals.confusablesFolded).toBe(2);
+  });
+});
+
+describe("leet folding is letter-context only", () => {
+  it("recovers intent words", () => {
+    expect(normalize("c4ll me").deleet).toContain("call");
+    expect(normalize("wh4tsapp me").deleet).toContain("whatsapp");
+  });
+
+  it("leaves prices and numeric codes intact", () => {
+    expect(normalize("the room is 4500 per night").deleet).toContain("4500");
+    expect(normalize("pin code 403507").deleet).toContain("403507");
+  });
+});
+
+describe("digit run merging", () => {
+  it("merges across dashes, dots and spaces", () => {
+    expect(extractDigitRuns("9-8-7-6-0")[0]?.digits).toBe("98760");
+    expect(extractDigitRuns("9 . 8 . 7")[0]?.digits).toBe("987");
+    expect(extractDigitRuns("98_76")[0]?.digits).toBe("9876");
+  });
+
+  it("expands double/triple multipliers", () => {
+    expect(extractDigitRuns("double five triple 9")[0]?.digits).toBe("55999");
+  });
+
+  it("does not invent runs from ordinary words", () => {
+    expect(extractDigitRuns("do you want to book for one")).toEqual([]);
+    expect(extractDigitRuns("call it a day")).toEqual([]);
+  });
+
+  it("marks pure-numeral runs as not mixed-form", () => {
+    const run = extractDigitRuns("9876543210")[0]!;
+    expect(run.mixedForm).toBe(false);
+    expect(run.wordFormCount).toBe(0);
+  });
+});
+
+describe("hard negatives survive normalization", () => {
+  it("leaves prices unmangled", () => {
+    const views = normalize("₹98,765 for 5 nights");
+    expect(views.signals.noiseDigitsRemoved).toBe(0);
+  });
+
+  it("leaves flight numbers and PIN codes unmangled", () => {
+    expect(normalize("flight 6E 2134").signals.noiseDigitsRemoved).toBe(0);
+    expect(normalize("pin 403507").signals.noiseDigitsRemoved).toBe(0);
+  });
+
+  it("leaves phone-model names unmangled", () => {
+    expect(normalize("iPhone 15 Pro, 256GB").signals.noiseDigitsRemoved).toBe(0);
+  });
+});
