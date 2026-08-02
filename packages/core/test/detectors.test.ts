@@ -117,6 +117,18 @@ describe("url detector", () => {
     expect(hasType("instagram dot com slash akshay", "contact.url")).toBe(true);
   });
 
+  it("extracts a phone number carried in a messenger link path", () => {
+    // wa.me/919876543210 leaks a complete number; reporting only "a link was
+    // shared" would let it through.
+    const found = types("https://wa.me/919876543210");
+    expect(found).toContain("contact.url.messenger");
+    expect(found).toContain("contact.phone");
+  });
+
+  it("does not invent a phone from an ordinary link with digits", () => {
+    expect(types("see wayzyy.com/listing/12345")).not.toContain("contact.phone");
+  });
+
   it("flags mixed-script homographs", () => {
     // Cyrillic 'а' inside an otherwise-Latin hostname.
     expect(hasType("visit wаyzyy.com", "contact.url.homograph")).toBe(true);

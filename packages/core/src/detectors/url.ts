@@ -34,6 +34,24 @@ export function detectUrl(views: NormalizedViews): Detection[] {
 
     const detection = classifyHostname(hostname, match[0], match.index);
     if (detection !== null) detections.push(detection);
+
+    // A messenger link often carries the phone number in its path
+    // (wa.me/919876543210). Tier 1 deliberately does not extract digit runs
+    // from URLs — that would flag every link with a number in it — so the
+    // number has to be recovered here, or a complete phone leaks while the
+    // engine reports only "a link was shared".
+    const path = match[2];
+    if (path !== undefined && matchesDomain(hostname, MESSENGER_DOMAINS)) {
+      const phone = extractPhoneFromPath(path);
+      if (phone !== null) {
+        detections.push({
+          type: "contact.phone",
+          span: { start: match.index, end: match.index + match[0].length },
+          confidence: 0.96,
+          evidence: `phone number in messenger link path: ${phone}`,
+        });
+      }
+    }
   }
 
   // Spoken forms are evaluated on the folded view too; they never overlap with
@@ -109,6 +127,21 @@ function isPlausibleHostname(hostname: string): boolean {
   if (/^\d+$/.test(tld)) return false; // decimals / version numbers
   if (tld.length < 2) return false;
   return COMMON_TLDS.has(tld) || RISKY_TLDS.has(tld) || tld.length >= 2;
+}
+
+/**
+ * Pull a phone number out of a URL path. Handles the wa.me convention of a
+ * bare country-code-prefixed number, and the `?phone=` query parameter.
+ */
+function extractPhoneFromPath(path: string): string | null {
+  for (const match of path.matchAll(/\d{10,15}/g)) {
+    const digits = match[0];
+    if (/^91[6-9]\d{9}$/.test(digits)) return digits;
+    if (/^[6-9]\d{9}$/.test(digits)) return digits;
+    // Other country codes: 11-15 digits starting with a plausible prefix.
+    if (digits.length >= 11 && digits.length <= 15) return digits;
+  }
+  return null;
 }
 
 const SCRIPT_TESTS: Array<[string, RegExp]> = [
