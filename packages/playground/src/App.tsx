@@ -1,25 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { explainCategory, summarize, verdictLabel, verdictTone } from "./copy.js";
 import { GROUP_LABELS, PRESETS, type Preset } from "./presets.js";
-import { TIERS, resetConversation, resolvedTierIndex, runEngine, type TraceEntry } from "./engine.js";
+import { resetConversation, runEngine, type TraceEntry } from "./engine.js";
 import { normalize } from "@gatekeeper/core";
 import type { BookingStage, SenderRole } from "@gatekeeper/core";
 
 const CONVERSATION_ID = "playground";
 
+type Theme = "light" | "dark";
+
+function getInitialTheme(): Theme {
+  const fromUrl = new URLSearchParams(window.location.search).get("theme");
+  if (fromUrl === "light" || fromUrl === "dark") return fromUrl;
+  const saved = localStorage.getItem("gk-theme");
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export default function App(): JSX.Element {
   const [entries, setEntries] = useState<TraceEntry[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [role, setRole] = useState<SenderRole>("guest");
   const [stage, setStage] = useState<BookingStage>("pre_booking");
   const [busy, setBusy] = useState(false);
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const threadEndRef = useRef<HTMLDivElement>(null);
 
-  const selected = useMemo(
-    () => entries.find((e) => e.id === selectedId) ?? entries[entries.length - 1] ?? null,
-    [entries, selectedId],
-  );
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("gk-theme", theme);
+  }, [theme]);
 
   const send = useCallback(
     async (text: string, asRole = role, asStage = stage) => {
@@ -30,8 +43,10 @@ export default function App(): JSX.Element {
       try {
         const entry = await runEngine(trimmed, asRole, asStage, CONVERSATION_ID);
         setEntries((prev) => [...prev, entry]);
-        setSelectedId(entry.id);
         setDraft("");
+        // Open the newest result automatically so the reason is visible
+        // without an extra click — that's the whole point of trying it.
+        setOpenId(entry.id);
       } finally {
         setBusy(false);
       }
@@ -51,12 +66,10 @@ export default function App(): JSX.Element {
   const reset = useCallback(() => {
     resetConversation();
     setEntries([]);
-    setSelectedId(null);
+    setOpenId(null);
   }, []);
 
-  // Land on a worked example rather than an empty form. The first thing a
-  // visitor should see is the engine taking a message apart — an empty state
-  // wastes the one screen where the product has to explain itself.
+  // Land on a worked example rather than an empty inbox.
   const seeded = useRef(false);
   useEffect(() => {
     if (seeded.current) return;
@@ -65,12 +78,14 @@ export default function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [entries.length]);
+
   const totals = useMemo(() => {
     const cost = entries.reduce((sum, e) => sum + e.result.cost_usd, 0);
-    const blocked = entries.filter((e) => e.result.verdict !== "allow").length;
-    const latencies = entries.map((e) => e.result.latency_ms).sort((a, b) => a - b);
-    const p95 = latencies.length > 0 ? latencies[Math.floor(latencies.length * 0.95)] ?? latencies[latencies.length - 1]! : 0;
-    return { cost, blocked, p95, count: entries.length };
+    const stopped = entries.filter((e) => e.result.verdict !== "allow").length;
+    return { cost, stopped, count: entries.length };
   }, [entries]);
 
   const grouped = useMemo(() => {
@@ -85,130 +100,127 @@ export default function App(): JSX.Element {
 
   return (
     <div className="app">
-      <header className="masthead">
-        <h1 className="wordmark">
-          Gate<span>keeper</span>
-        </h1>
-        <p className="tagline">
-          Contact-evasion and safety checks for guest–host chat. Try to get something past it.
-        </p>
-        <div className="masthead-spacer" />
-        <div className="masthead-stat">
-          engine runs <b>in this tab</b> — no server
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            G
+          </span>
+          <span className="brand-name">Gatekeeper</span>
+          <span className="brand-tag">catches shared contact info &amp; unsafe messages</span>
         </div>
+        <div className="topbar-spacer" />
+        <div className="stats-strip">
+          <span>
+            <b>{totals.count}</b> checked
+          </span>
+          <span>
+            <b>{totals.stopped}</b> stopped
+          </span>
+        </div>
+        <button
+          className="theme-toggle"
+          onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+          aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+        >
+          {theme === "light" ? <MoonIcon /> : <SunIcon />}
+        </button>
       </header>
 
-      <div className="columns">
-        {/* ----------------------------------------------------- presets -- */}
-        <aside className="col col-presets">
-          <h2 className="col-title">Try one</h2>
+      <div className="body">
+        <aside className="sidebar">
+          <h2 className="sidebar-title">Try a message</h2>
           {grouped.map(([group, presets]) => (
-            <div className="preset-group" key={group}>
-              <h3 className="preset-group-title">{GROUP_LABELS[group]}</h3>
+            <div className="sidebar-group" key={group}>
+              <h3 className="sidebar-group-title">{GROUP_LABELS[group]}</h3>
               {presets.map((preset) => (
-                <button
-                  className="preset"
-                  key={preset.label}
-                  onClick={() => usePreset(preset)}
-                  disabled={busy}
-                >
-                  {preset.label}
-                  <span className="preset-note">{preset.note}</span>
+                <button className="preset-btn" key={preset.label} onClick={() => usePreset(preset)} disabled={busy}>
+                  <span className="preset-btn-label">
+                    <span className="preset-dot" data-kind={preset.group} aria-hidden="true" />
+                    {preset.label}
+                  </span>
+                  <span className="preset-btn-note">{preset.note}</span>
                 </button>
               ))}
             </div>
           ))}
         </aside>
 
-        {/* -------------------------------------------------------- chat -- */}
-        <main className="col">
-          <h2 className="col-title">Conversation</h2>
-
-          <div className="controls">
-            <div className="seg" role="group" aria-label="Sender">
+        <main className="main">
+          <div className="toolbar">
+            <div className="pillgroup" role="group" aria-label="Who's sending">
               {(["guest", "host"] as const).map((r) => (
                 <button key={r} aria-pressed={role === r} onClick={() => setRole(r)}>
-                  {r}
+                  {r === "guest" ? "Guest" : "Host"}
                 </button>
               ))}
             </div>
-            <div className="seg" role="group" aria-label="Booking stage">
+            <div className="pillgroup" role="group" aria-label="Booking stage">
               {(["pre_booking", "post_booking"] as const).map((s) => (
                 <button key={s} aria-pressed={stage === s} onClick={() => setStage(s)}>
-                  {s === "pre_booking" ? "before booking" : "after booking"}
+                  {s === "pre_booking" ? "Before booking" : "After booking"}
                 </button>
               ))}
             </div>
-            <button className="reset" onClick={reset} disabled={entries.length === 0}>
-              clear
+            <div className="toolbar-spacer" />
+            <button className="clear-btn" onClick={reset} disabled={entries.length === 0}>
+              Clear chat
             </button>
           </div>
 
-          <div className="thread">
+          <div className="thread-scroll">
             {entries.length === 0 ? (
-              <p className="empty">
-                Send a message, or pick one on the left.
-                <br />
-                Every check runs here, in your browser, in under a millisecond.
-              </p>
+              <div className="empty-state">
+                <div className="empty-state-icon" aria-hidden="true">
+                  💬
+                </div>
+                <h3>Nothing sent yet</h3>
+                <p>Pick a message on the left, or write your own below.</p>
+              </div>
             ) : (
-              entries.map((entry) => <Message key={entry.id} entry={entry} selected={entry.id === selected?.id} onSelect={setSelectedId} />)
+              <div className="thread">
+                {entries.map((entry) => (
+                  <Message
+                    key={entry.id}
+                    entry={entry}
+                    open={entry.id === openId}
+                    onToggle={() => setOpenId((cur) => (cur === entry.id ? null : entry.id))}
+                  />
+                ))}
+                <div ref={threadEndRef} />
+              </div>
             )}
           </div>
 
-          <form
-            className="composer"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send(draft);
-            }}
-          >
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void send(draft);
-                }
+          <div className="composer-wrap">
+            <form
+              className="composer"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void send(draft);
               }}
-              placeholder="Write a message…"
-              aria-label="Message"
-            />
-            <button className="send" type="submit" disabled={busy || draft.trim() === ""}>
-              Send
-            </button>
-          </form>
+            >
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void send(draft);
+                  }
+                }}
+                placeholder={`Write a message as ${role === "guest" ? "the guest" : "the host"}…`}
+                aria-label="Message"
+                rows={1}
+              />
+              <button className="send-btn" type="submit" disabled={busy || draft.trim() === ""} aria-label="Send">
+                <SendIcon />
+              </button>
+            </form>
+            <p className="composer-hint">Runs in your browser — nothing is sent to a server.</p>
+          </div>
         </main>
-
-        {/* ------------------------------------------------------- trace -- */}
-        <section className="col">
-          <h2 className="col-title">What the engine saw</h2>
-          {selected === null ? (
-            <p className="empty">Nothing checked yet.</p>
-          ) : (
-            <Trace entry={selected} />
-          )}
-        </section>
       </div>
-
-      <footer className="footer">
-        <span>
-          <b>{totals.count}</b> checked
-        </span>
-        <span>
-          <b>{totals.blocked}</b> stopped
-        </span>
-        <span>
-          p95 <b>{fmtMs(totals.p95)}</b>
-        </span>
-        <span className="footer-cost">
-          spent <b>${totals.cost.toFixed(4)}</b>
-        </span>
-        <span className="spacer" />
-        <span>precision 1.000 · recall 0.997 · friction 0.00% over 2,075 labelled messages</span>
-      </footer>
     </div>
   );
 }
@@ -217,202 +229,211 @@ export default function App(): JSX.Element {
 
 function Message({
   entry,
-  selected,
-  onSelect,
+  open,
+  onToggle,
 }: {
   entry: TraceEntry;
-  selected: boolean;
-  onSelect: (id: string) => void;
+  open: boolean;
+  onToggle: () => void;
 }): JSX.Element {
-  const { action } = entry;
+  const { result, action } = entry;
   const withheld = action.deliveredText === null;
+  const tone = verdictTone(result.verdict);
 
   return (
-    <article
-      className="msg"
-      data-verdict={entry.result.verdict}
-      aria-selected={selected}
-      tabIndex={0}
-      onClick={() => onSelect(entry.id)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect(entry.id);
-        }
-      }}
-    >
-      <div className="msg-head">
-        <span className="msg-role">{entry.role}</span>
+    <div className="row" data-role={entry.role}>
+      <div className="row-meta">
+        <span>{entry.role === "guest" ? "Guest" : "Host"}</span>
+        <span>·</span>
         <span>{entry.stage === "pre_booking" ? "before booking" : "after booking"}</span>
-        <span className="msg-time">{fmtMs(entry.result.latency_ms)}</span>
       </div>
 
-      <div className={`msg-body${withheld ? " withheld" : action.action === "mask" ? " masked" : ""}`}>
-        {withheld ? "Not delivered" : action.deliveredText}
+      <div className={`bubble${withheld ? " is-withheld" : action.action === "mask" ? " is-masked" : ""}`}>
+        {withheld ? "This message wasn't delivered." : renderMasked(action.deliveredText ?? entry.text)}
       </div>
 
-      {action.reason !== "" && <p className="msg-reason">{action.reason}</p>}
-    </article>
+      <div className="verdict-row">
+        <button className="verdict-btn" data-tone={tone} aria-expanded={open} onClick={onToggle}>
+          <VerdictIcon tone={tone} />
+          {verdictLabel(result.verdict)}
+          <ChevronIcon />
+        </button>
+      </div>
+
+      {open && <WhyPanel entry={entry} />}
+    </div>
   );
 }
 
-/* --------------------------------------------------------------- trace -- */
+/** Render mask characters as a subtly highlighted run, so it reads as "hidden" not "typo". */
+function renderMasked(text: string): React.ReactNode {
+  const parts = text.split(/(•+)/g);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) => (part.startsWith("•") ? <mark key={i}>{part}</mark> : part));
+}
 
-function Trace({ entry }: { entry: TraceEntry }): JSX.Element {
+/* -------------------------------------------------------------- why panel */
+
+function WhyPanel({ entry }: { entry: TraceEntry }): JSX.Element {
   const { result } = entry;
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const views = useMemo(() => normalize(entry.text), [entry.text]);
-  const resolvedIndex = resolvedTierIndex(result);
 
-  const contributions = Object.entries(
-    (result.signals["contributions"] as Record<string, number> | undefined) ?? {},
-  ).sort((a, b) => b[1] - a[1]);
-
-  const maxContribution = Math.max(1, ...contributions.map(([, v]) => v));
+  const reasons = result.categories.map(explainCategory);
+  const tone = verdictTone(result.verdict);
 
   return (
-    <>
-      {/* signature: the tier ladder. The light stops where the message did. */}
-      <div className="ladder" aria-label="Which tier decided">
-        {TIERS.map((tier, index) => {
-          const state = index < resolvedIndex ? "used" : index === resolvedIndex ? "resolved" : "unused";
-          return (
-            <div className="rung" key={tier.key} data-state={state}>
-              <div className="rung-index">{index + 1}</div>
-              <div className="rung-label">{tier.label}</div>
-              {state === "resolved" && <div className="rung-bar" />}
-            </div>
-          );
-        })}
-      </div>
+    <div className="why-panel">
+      <p className="why-summary">{summarize(result.categories, result.verdict)}</p>
 
-      <div className="verdict-bar">
-        <span className="verdict-chip" data-v={result.verdict}>
-          {result.verdict}
-        </span>
-        <span className="masthead-stat">
-          decided at tier <b>{resolvedIndex + 1}</b>
-        </span>
-        <span className="verdict-meta">
-          <b>{fmtMs(result.latency_ms)}</b> · <b>${result.cost_usd.toFixed(5)}</b>
-        </span>
-      </div>
-
-      <Section title="Normalized views">
-        <div className="views">
-          <ViewRow name="raw" value={views.raw} />
-          <ViewRow name="folded" value={views.folded} changed={views.folded !== views.raw.toLowerCase()} />
-          <ViewRow name="denoised" value={views.denoised} changed={views.denoised !== views.folded} />
-          <ViewRow name="digitized" value={views.digitized} changed={views.digitized !== views.denoised} />
-        </div>
-      </Section>
-
-      {views.digitRuns.length > 0 && (
-        <Section title="Numbers recovered">
-          <div className="chips">
-            {views.digitRuns.map((run, index) => (
-              <span className="chip" data-kind="contact" key={index}>
-                {run.digits}
-                {run.mixedForm ? " · words+digits" : ""}
-              </span>
-            ))}
-          </div>
-        </Section>
+      {reasons.length > 0 && (
+        <ul className="reason-list">
+          {reasons.map((reason, i) => (
+            <li className="reason-item" data-tone={tone} key={i}>
+              <span className="reason-bullet" aria-hidden="true" />
+              {reason}
+            </li>
+          ))}
+        </ul>
       )}
-
-      {result.categories.length > 0 && (
-        <Section title="What was found">
-          <div className="chips">
-            {result.categories.map((category) => (
-              <span className="chip" data-kind={category.split(".")[0]} key={category}>
-                {category}
-              </span>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {contributions.length > 0 && (
-        <Section title={`Score ${Number(result.signals["risk_score"] ?? 0).toFixed(2)}`}>
-          <div className="bars">
-            {contributions.map(([name, value]) => (
-              <div className="bar-row" key={name}>
-                <span className="bar-name">{name}</span>
-                <span className="bar-track">
-                  <span className="bar-fill" style={{ width: `${(value / maxContribution) * 100}%` }} />
-                </span>
-                <span className="bar-value">{value.toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      <Section title="Signals">
-        <div className="kv">
-          <Kv label="noise digits" value={result.signals["noise_digits_removed"]} hot />
-          <Kv label="zero-width" value={result.signals["zero_width_count"]} hot />
-          <Kv label="homoglyphs" value={result.signals["confusables_folded"]} hot />
-          <Kv label="odd tokens" value={result.signals["weird_tokens"]} hot />
-          <Kv label="digit pressure" value={fmt(result.signals["digit_pressure"])} />
-          <Kv label="intent hits" value={(result.signals["intent_hits"] as string[] | undefined)?.length ?? 0} />
-        </div>
-      </Section>
 
       {result.signals["merged_fragments"] !== undefined && (
-        <Section title="Across messages">
-          <div className="chips">
-            <span className="chip" data-kind="safety">
-              rebuilt {String(result.signals["merged_fragments"])} from{" "}
-              {String(result.signals["merged_from_messages"])} messages
-            </span>
-          </div>
-        </Section>
+        <ul className="reason-list">
+          <li className="reason-item" data-tone="stop">
+            <span className="reason-bullet" aria-hidden="true" />
+            Combined with an earlier message, this forms the number{" "}
+            {String(result.signals["merged_fragments"])}
+          </li>
+        </ul>
       )}
-    </>
-  );
-}
 
-function Section({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
-  return (
-    <div className="section">
-      <h3 className="section-title">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function ViewRow({ name, value, changed }: { name: string; value: string; changed?: boolean }): JSX.Element {
-  return (
-    <div className="view-row" data-changed={changed === true}>
-      <span className="view-name">{name}</span>
-      <span className="view-value">{value === "" ? "—" : value}</span>
-    </div>
-  );
-}
-
-function Kv({ label, value, hot }: { label: string; value: unknown; hot?: boolean }): JSX.Element {
-  const numeric = typeof value === "number" ? value : Number(value ?? 0);
-  return (
-    <div className="kv-item">
-      <div className="kv-key">{label}</div>
-      <div className="kv-val" data-hot={hot === true && numeric > 0}>
-        {String(value ?? 0)}
+      <div className="why-meta">
+        <span>
+          Checked in <b>{fmtMs(result.latency_ms)}</b>
+        </span>
+        <span>
+          Cost <b>${result.cost_usd.toFixed(5)}</b>
+        </span>
+        <span>
+          Decided by <b>{friendlyTier(result.resolved_by)}</b>
+        </span>
       </div>
+
+      <button className="why-advanced-toggle" onClick={() => setShowAdvanced((v) => !v)}>
+        {showAdvanced ? "Hide technical details" : "Show technical details"}
+      </button>
+
+      {showAdvanced && (
+        <dl className="advanced">
+          <div className="advanced-row">
+            <dt>original</dt>
+            <dd>{views.raw}</dd>
+          </div>
+          <div className="advanced-row">
+            <dt>cleaned up</dt>
+            <dd data-changed={views.denoised !== views.folded}>{views.denoised}</dd>
+          </div>
+          {views.digitRuns.length > 0 && (
+            <div className="advanced-row">
+              <dt>numbers found</dt>
+              <dd data-changed="true">{views.digitRuns.map((r) => r.digits).join(", ")}</dd>
+            </div>
+          )}
+          <div className="advanced-row">
+            <dt>risk score</dt>
+            <dd>{Number(result.signals["risk_score"] ?? 0).toFixed(2)}</dd>
+          </div>
+          <div className="advanced-row">
+            <dt>categories</dt>
+            <dd>{result.categories.length > 0 ? result.categories.join(", ") : "none"}</dd>
+          </div>
+        </dl>
+      )}
     </div>
   );
 }
 
-/**
- * Sub-0.01ms rounds to "0.00 ms", which reads as broken rather than fast.
- * Show real precision at the low end instead.
- */
+function friendlyTier(resolvedBy: string): string {
+  if (resolvedBy === "cache") return "cached result";
+  if (resolvedBy.startsWith("tier5")) return "AI review";
+  if (resolvedBy.startsWith("tier4")) return "pattern model";
+  if (resolvedBy.startsWith("tier3")) return "risk score";
+  if (resolvedBy.startsWith("tier2")) return "rule match";
+  return "quick check";
+}
+
 function fmtMs(ms: number): string {
-  if (ms >= 1) return `${ms.toFixed(2)} ms`;
-  if (ms >= 0.01) return `${ms.toFixed(3)} ms`;
+  if (ms >= 1) return `${ms.toFixed(1)} ms`;
+  if (ms >= 0.01) return `${ms.toFixed(2)} ms`;
   return `${Math.max(1, Math.round(ms * 1000))} µs`;
 }
 
-function fmt(value: unknown): string {
-  const numeric = typeof value === "number" ? value : Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric.toFixed(1) : "0";
+/* ---------------------------------------------------------------- icons -- */
+
+function VerdictIcon({ tone }: { tone: "good" | "caution" | "stop" }): JSX.Element {
+  if (tone === "good") {
+    return (
+      <svg className="verdict-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path d="M4 10.5l3.5 3.5L16 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (tone === "caution") {
+    return (
+      <svg className="verdict-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" />
+        <path d="M10 6.5v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="10" cy="13.2" r="1" fill="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="verdict-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" />
+      <path d="M6.5 6.5l7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChevronIcon(): JSX.Element {
+  return (
+    <svg className="verdict-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SendIcon(): JSX.Element {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M3 10l14-6-6 14-2-6-6-2z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function SunIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="10" cy="10" r="3.5" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4M15.3 15.3l-1.4-1.4M6.1 6.1L4.7 4.7"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function MoonIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M16.5 12.3A6.8 6.8 0 017.7 3.5a7 7 0 108.8 8.8z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
