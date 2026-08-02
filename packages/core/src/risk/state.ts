@@ -33,8 +33,18 @@ export interface PairState {
   digitPressureUpdatedAt: number;
   /** Last N digit runs with timestamps, for cross-message merging. */
   fragmentBuffer: TimestampedRun[];
-  /** Cumulative off-platform intent hits. */
+  /**
+   * Cumulative off-platform intent hits, decayed like digitPressure.
+   *
+   * Without decay a single "call me" early in a long, otherwise-ordinary
+   * conversation stays on the books forever and inflates every later
+   * message's score — including a plain "hi and welcome" with zero
+   * detections of its own. Decaying it means intent only counts as a
+   * pattern of RECENT behaviour, the same rationale as digit pressure.
+   */
   intentHits: number;
+  /** When intentHits was last updated, for decay. */
+  intentHitsUpdatedAt: number;
   /** Blocks/warns accumulated against this pair. */
   strikes: number;
   /** Last N messages, for the windowed re-scan. */
@@ -49,6 +59,7 @@ export function emptyPairState(nowMs: number): PairState {
     digitPressureUpdatedAt: nowMs,
     fragmentBuffer: [],
     intentHits: 0,
+    intentHitsUpdatedAt: nowMs,
     strikes: 0,
     lastMessages: [],
     recentBlocks: [],
@@ -107,9 +118,22 @@ export function decayDigitPressure(
   nowMs: number,
   halfLifeMs: number,
 ): number {
-  const elapsed = nowMs - state.digitPressureUpdatedAt;
-  if (elapsed <= 0 || state.digitPressure === 0) return state.digitPressure;
-  return state.digitPressure * Math.pow(0.5, elapsed / halfLifeMs);
+  return decayValue(state.digitPressure, state.digitPressureUpdatedAt, nowMs, halfLifeMs);
+}
+
+/**
+ * Exponential decay of accumulated intent hits — same rationale as digit
+ * pressure. One "call me" early in a conversation must not permanently raise
+ * the score of every later, unrelated message.
+ */
+export function decayIntentHits(state: PairState, nowMs: number, halfLifeMs: number): number {
+  return decayValue(state.intentHits, state.intentHitsUpdatedAt, nowMs, halfLifeMs);
+}
+
+function decayValue(value: number, updatedAt: number, nowMs: number, halfLifeMs: number): number {
+  const elapsed = nowMs - updatedAt;
+  if (elapsed <= 0 || value === 0) return value;
+  return value * Math.pow(0.5, elapsed / halfLifeMs);
 }
 
 /** Drop fragments older than the merge window (SPEC §6: 30 min). */

@@ -11,6 +11,7 @@ import { buildRescanText, mergeFragments, totalDigitCount, uniqueDigitCount } fr
 import { bandFor, scoreMessage, type Band, type ScoreBreakdown } from "./score.js";
 import {
   decayDigitPressure,
+  decayIntentHits,
   emptyPairState,
   pruneFragments,
   type PairState,
@@ -71,6 +72,9 @@ export class RiskEngine {
 
     // --- decay carried-over pressure ---------------------------------------
     const decayedPressure = decayDigitPressure(state, nowMs, session.digitPressureHalfLifeMs);
+    // Same half-life as digit pressure: both measure recent behaviour, not a
+    // permanent record.
+    const decayedIntentHits = decayIntentHits(state, nowMs, session.digitPressureHalfLifeMs);
 
     // --- windowed re-scan ---------------------------------------------------
     // Concatenate this sender's recent messages and re-run Tier 1+2, so a
@@ -130,7 +134,7 @@ export class RiskEngine {
         digitRuns: views.digitRuns,
         weirdTokenCount: input.weirdTokenCount,
         digitPressure: decayedPressure,
-        sessionIntentHits: state.intentHits,
+        sessionIntentHits: decayedIntentHits,
         role: request.sender_role,
         stage: request.booking_stage,
         text: views.folded,
@@ -149,6 +153,10 @@ export class RiskEngine {
     }
 
     // --- persist updated state ----------------------------------------------
+    // Only count intent hits belonging to the CURRENT message's sender.
+    // rescanDetections are found across THIS sender's recent turns, so they
+    // stay in scope; but session.intentHits itself must never mix senders —
+    // a guest's "call me" must not inflate the host's next "welcome!".
     const messageIntentHits = combinedDetections.filter((d) => d.type.startsWith("intent.")).length;
 
     // Digit pressure accrues from the volume of digits shared, pre-booking
@@ -167,7 +175,8 @@ export class RiskEngine {
         session.fragmentWindowMs,
         session.fragmentBufferSize,
       ),
-      intentHits: state.intentHits + messageIntentHits,
+      intentHits: decayedIntentHits + messageIntentHits,
+      intentHitsUpdatedAt: nowMs,
       strikes: state.strikes + (band === "block" ? 1 : 0),
       lastMessages: [
         ...state.lastMessages,

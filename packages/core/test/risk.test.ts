@@ -422,3 +422,52 @@ describe("reporting an approach is not making one", () => {
     );
   });
 });
+
+/**
+ * A message with no detections of its own must never be escalated purely by
+ * relationship carryover (digitPressure, sessionIntentHits). Found via manual
+ * testing: "hi and welcome to this property" was blocking because it inherited
+ * a stale intent hit and digit pressure from an EARLIER, unrelated message in
+ * the same conversation.
+ */
+describe("contentless messages never inherit a block from session state", () => {
+  let store: MemorySessionStore;
+  beforeEach(() => {
+    store = new MemorySessionStore();
+  });
+
+  it("allows ordinary greetings immediately after a real evasion in the same conversation", async () => {
+    await moderateStateful(req("hi i a92m a121ksh35ay call me on nine eight 7 six zero"), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+
+    for (const text of ["hi and welcome to this property", "hello", "hi", "good morning", "thank you"]) {
+      const result = await moderateStateful(
+        req(text, { message_id: `m_${text}`, sender_role: "host" }),
+        { store, trigramModel: MODEL, nowMs: T0 + 1000 },
+      );
+      expect(result.verdict, text).toBe("allow");
+    }
+  });
+
+  it("still blocks a genuine evasion in the same conversation right after", async () => {
+    await moderateStateful(req("hi i a92m a121ksh35ay call me on nine eight 7 six zero"), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+    await moderateStateful(req("hi and welcome!", { message_id: "m2", sender_role: "host" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0 + 1000,
+    });
+
+    const result = await moderateStateful(
+      req("my number is 9876543210", { message_id: "m3" }),
+      { store, trigramModel: MODEL, nowMs: T0 + 2000 },
+    );
+    expect(result.verdict).toBe("block");
+  });
+});

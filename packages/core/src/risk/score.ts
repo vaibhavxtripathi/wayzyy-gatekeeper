@@ -263,7 +263,18 @@ export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakd
 
   // Stage relaxes contact only. Role asymmetry (a host pushing off-platform is
   // worse than a guest) applies to contact risk, where the fraud lives.
-  const score = contact * stageModifier * roleModifier + safety;
+  let score = contact * stageModifier * roleModifier + safety;
+
+  // A message with NO detections of its own — no phone, no handle, no intent
+  // word, nothing — must never be escalated purely by relationship carryover
+  // (digitPressure, sessionIntentHits). Those exist to accumulate evidence
+  // ACROSS messages that each contribute something; they must not manufacture
+  // risk on a message that contributes nothing. Without this, "hi and welcome
+  // to this property" inherits a stale intent hit from three turns ago and
+  // blocks on its own.
+  if (input.detections.length === 0 && score >= config.bands.low) {
+    score = Math.min(score, config.bands.low - 0.01);
+  }
 
   return {
     score,
