@@ -427,4 +427,14 @@ export type {
 export type { ClassifierModel, ClassifierResult, FeatureInput } from "./classifier/index.js";
 export type { TrigramModel, MessageWeirdness, TokenScore } from "./weirdness/index.js";
 export * from "./risk/index.js";
+export {
+  applyPolicy,
+  maskSpans,
+  RateLimiter,
+  senderKey,
+  toPendingResult,
+  REASONS,
+} from "./policy/index.js";
+export type { Action, PolicyDecision, PolicyOptions } from "./policy/index.js";
+export { createGroqTransport } from "./llm/groq.js";
 export * from "./types.js";
