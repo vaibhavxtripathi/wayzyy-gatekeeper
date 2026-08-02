@@ -158,6 +158,11 @@ export function applyPolicy(
 export function maskSpans(text: string, spans: readonly Span[]): { text: string; spans: Span[] } {
   const usable = spans
     .filter((s) => s.start >= 0 && s.end <= text.length && s.end > s.start)
+    // Mask IDENTIFIERS, not intent. "my number is 9876543210" should deliver
+    // as "my number is ••••••••••", not "•••••••••••• ••••••••••" — the
+    // phrase carries no contact data, and redacting it makes the delivered
+    // message unreadable for no benefit.
+    .filter((s) => !s.type.startsWith("intent."))
     .sort((a, b) => a.start - b.start);
 
   if (usable.length === 0) return { text, spans: [] };

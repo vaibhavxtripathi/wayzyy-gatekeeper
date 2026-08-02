@@ -177,3 +177,15 @@ describe("span alignment against the raw message", () => {
     expect(masked).not.toContain("six zero");
   });
 });
+
+describe("masking hides identifiers, not intent", () => {
+  it("leaves the surrounding phrase readable", () => {
+    const { text } = maskSpans("my number is 9876543210", [
+      { start: 0, end: 12, type: "intent.contact" },
+      { start: 13, end: 23, type: "contact.phone" },
+    ]);
+    // Redacting "my number is" makes the delivered message unreadable for no
+    // security benefit — only the identifier is sensitive.
+    expect(text).toBe("my number is ••••••••••");
+  });
+});

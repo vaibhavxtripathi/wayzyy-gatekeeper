@@ -86,14 +86,19 @@ export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakd
     add("validPhone", w.validPhone);
   }
 
-  // w2 · partialPhone · (len/10) — scaled by how much of a number is present.
+  // w2 · partialPhone, scaled by how much of a number is present.
+  //
+  // Scaling is superlinear past 7 digits: a 5-6 digit run overlaps PIN codes,
+  // prices and booking refs and must stay quiet, but an 8+ digit run with no
+  // benign context has no innocent reading. A plain "22352352" scored 2.0
+  // under a flat len/10 scale and was silently ALLOWED, which is the one
+  // outcome a partial should never produce — SPEC §4 says partials must not
+  // auto-block, not that they should pass unremarked.
   const partials = input.detections.filter((d) => d.type.startsWith("contact.phone.partial"));
   if (partials.length > 0) {
-    const longest = Math.max(
-      ...input.digitRuns.map((r) => r.digits.length),
-      0,
-    );
-    const value = w.partialPhone * Math.min(1, longest / 10);
+    const longest = Math.max(...input.digitRuns.map((r) => r.digits.length), 0);
+    const ratio = Math.min(1, longest / 10);
+    const value = longest >= 8 ? w.partialPhone * (1 + ratio) : w.partialPhone * ratio;
     contact += value;
     add("partialPhone", value);
   }

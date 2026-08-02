@@ -471,3 +471,55 @@ describe("contentless messages never inherit a block from session state", () => 
     expect(result.verdict).toBe("block");
   });
 });
+
+/**
+ * Reported from manual testing: a bare 8-digit run was silently ALLOWED.
+ * SPEC §4 says partials must not auto-block; it does not say they should pass
+ * unremarked. 5-6 digit runs still stay quiet because they overlap PIN codes,
+ * prices and booking refs.
+ */
+describe("long unexplained digit runs are not silently allowed", () => {
+  for (const text of ["22352352", "12345678", "987654321"]) {
+    it(`stops: "${text}"`, () => {
+      expect(moderate(req(text), { trigramModel: MODEL }).verdict).not.toBe("allow");
+    });
+  }
+
+  for (const text of [
+    "the pin code here is 403507",
+    "booking ref WYZ8842",
+    "the total is ₹98,765 for 5 nights",
+    "flight 6E 2134 lands at 9pm",
+    "we are 4 adults and 2 kids",
+  ]) {
+    it(`still allows: "${text.slice(0, 40)}"`, () => {
+      expect(moderate(req(text), { trigramModel: MODEL }).verdict).toBe("allow");
+    });
+  }
+});
+
+/**
+ * The windowed re-scan finds evidence across turns, but that evidence belongs
+ * to EARLIER messages. Reporting it in `categories` made the engine claim
+ * "looks like a phone number" about a message containing no number, and
+ * produced spans that do not index into this message's text.
+ */
+describe("cross-message evidence is reported separately", () => {
+  it("does not attribute an earlier message's categories to this one", async () => {
+    const store = new MemorySessionStore();
+    await moderateStateful(req("this is my phone no 9876543210"), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+
+    const result = await moderateStateful(
+      req("lets book direct next time", { message_id: "m2" }),
+      { store, trigramModel: MODEL, nowMs: T0 + 1000 },
+    );
+
+    expect(result.categories).toContain("intent.offplatform");
+    expect(result.categories).not.toContain("contact.phone");
+    expect(result.signals["cross_message_categories"]).toContain("contact.phone");
+  });
+});

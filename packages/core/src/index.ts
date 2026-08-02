@@ -235,7 +235,13 @@ export async function moderateStateful(
 
   return buildResult({
     band: assessment.band,
-    detections: [...detections, ...assessment.rescanDetections],
+    // Only THIS message's own detections become categories and spans.
+    // Windowed re-scan hits belong to earlier turns; reporting them here
+    // makes the engine claim "looks like a phone number" about a message
+    // that contains no number, and produces spans that do not index into
+    // this text. They are surfaced separately, and Tier 4 still sees them.
+    detections,
+    rescanDetections: assessment.rescanDetections,
     intentHits,
     views,
     weirdness,
@@ -267,6 +273,8 @@ interface BuildResultInput {
   weirdness: ReturnType<typeof messageWeirdness> | null;
   breakdown: ReturnType<typeof scoreMessage>;
   started: number;
+  /** Evidence found only by looking across recent turns (SPEC §6). */
+  rescanDetections?: readonly import("./types.js").Detection[];
   /** Tier 4 output, present only when Tier 3 escalated (SPEC §7). */
   tier4?: ReturnType<typeof classify> | null;
   /** Tier 5 output, present only when Tier 4 was still uncertain (SPEC §8). */
@@ -373,6 +381,13 @@ function buildResult(input: BuildResultInput): ModerateResult {
       detections: detections.length,
       ...(weirdness !== null
         ? { weirdness: round(weirdness.score), weird_tokens: weirdness.weirdTokenCount }
+        : {}),
+      ...((input.rescanDetections?.length ?? 0) > 0
+        ? {
+            cross_message_categories: [
+              ...new Set((input.rescanDetections ?? []).map((d) => d.type)),
+            ],
+          }
         : {}),
       ...(tier4 !== null
         ? { classifier_p: round(tier4.probability), classifier_decision: tier4.decision }

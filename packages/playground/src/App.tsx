@@ -74,7 +74,10 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (seeded.current) return;
     seeded.current = true;
-    void send(PRESETS[0]!.text, "guest", "pre_booking");
+    void (async () => {
+      await send("hi, is the place available next weekend?", "guest", "pre_booking");
+      await send(PRESETS[0]!.text, "guest", "pre_booking");
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -248,9 +251,14 @@ function Message({
         <span>{entry.stage === "pre_booking" ? "before booking" : "after booking"}</span>
       </div>
 
+      {/* Always show what the sender actually typed. Replacing it with system
+          copy hides the very thing the demo exists to show, and reads as if
+          the user had sent "This message wasn't delivered." */}
       <div className={`bubble${withheld ? " is-withheld" : action.action === "mask" ? " is-masked" : ""}`}>
-        {withheld ? "This message wasn't delivered." : renderMasked(action.deliveredText ?? entry.text)}
+        {withheld ? entry.text : renderMasked(action.deliveredText ?? entry.text)}
       </div>
+
+      {withheld && <p className="delivery-note">Not sent to the other person</p>}
 
       <div className="verdict-row">
         <button className="verdict-btn" data-tone={tone} aria-expanded={open} onClick={onToggle}>
@@ -280,6 +288,7 @@ function WhyPanel({ entry }: { entry: TraceEntry }): JSX.Element {
   const views = useMemo(() => normalize(entry.text), [entry.text]);
 
   const reasons = result.categories.map(explainCategory);
+  const crossMessage = (result.signals["cross_message_categories"] as string[] | undefined) ?? [];
   const tone = verdictTone(result.verdict);
 
   return (
@@ -292,6 +301,20 @@ function WhyPanel({ entry }: { entry: TraceEntry }): JSX.Element {
             <li className="reason-item" data-tone={tone} key={i}>
               <span className="reason-bullet" aria-hidden="true" />
               {reason}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {crossMessage.length > 0 && (
+        <ul className="reason-list">
+          {crossMessage.map((category, i) => (
+            <li className="reason-item is-cross" data-tone={tone} key={i}>
+              <span className="reason-bullet" aria-hidden="true" />
+              <span>
+                {explainCategory(category)}{" "}
+                <span className="reason-scope">— seen in an earlier message</span>
+              </span>
             </li>
           ))}
         </ul>
