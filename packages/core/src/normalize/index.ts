@@ -24,12 +24,22 @@ export function normalize(raw: string): NormalizedViews {
   // 4. Token-level noise strip. Runs on the folded view so that confusables
   // are already ASCII, but NOT on deleet — deleet turns digits into letters,
   // which would hide exactly the noise digits we want to count.
-  const { text: denoised, noiseDigitsRemoved } = denoise(folded);
+  const { text: denoised, noiseDigitsRemoved, offsetMap } = denoise(folded);
 
   // 5-6. Number-word expansion and digit-run extraction. Both run on the
   // denoised view so interior noise digits never pollute a candidate number.
   const digitized = toDigitizedView(denoised);
-  const digitRuns = extractDigitRuns(denoised);
+
+  // Runs are found on the denoised view, whose offsets have shifted wherever
+  // noise digits were removed. Translate them back so every span this module
+  // publishes indexes into `raw` — the policy layer masks the original text.
+  const digitRuns = extractDigitRuns(denoised).map((run) => ({
+    ...run,
+    sourceSpan: {
+      start: offsetMap[run.sourceSpan.start] ?? run.sourceSpan.start,
+      end: (offsetMap[run.sourceSpan.end - 1] ?? run.sourceSpan.end - 1) + 1,
+    },
+  }));
 
   return {
     raw,
@@ -39,6 +49,7 @@ export function normalize(raw: string): NormalizedViews {
     denoised,
     digitized,
     digitRuns,
+    denoisedOffsetMap: offsetMap,
     signals: {
       noiseDigitsRemoved,
       zeroWidthCount,

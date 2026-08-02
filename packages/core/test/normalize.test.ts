@@ -61,18 +61,23 @@ describe("benchmark string #2 — handle smuggling with separator + word tail", 
 
 describe("denoiseToken", () => {
   it("removes interior digit runs with letters on both sides", () => {
-    expect(denoiseToken("a92m")).toEqual({ text: "am", noiseDigitsRemoved: 2 });
-    expect(denoiseToken("a121ksh35ay")).toEqual({ text: "akshay", noiseDigitsRemoved: 5 });
+    expect(denoiseToken("a92m")).toMatchObject({ text: "am", noiseDigitsRemoved: 2 });
+    expect(denoiseToken("a121ksh35ay")).toMatchObject({ text: "akshay", noiseDigitsRemoved: 5 });
   });
 
   it("keeps digits at token boundaries", () => {
-    expect(denoiseToken("iphone15")).toEqual({ text: "iphone15", noiseDigitsRemoved: 0 });
-    expect(denoiseToken("15pro")).toEqual({ text: "15pro", noiseDigitsRemoved: 0 });
+    expect(denoiseToken("iphone15")).toMatchObject({ text: "iphone15", noiseDigitsRemoved: 0 });
+    expect(denoiseToken("15pro")).toMatchObject({ text: "15pro", noiseDigitsRemoved: 0 });
   });
 
   it("never touches purely numeric tokens", () => {
-    expect(denoiseToken("98765")).toEqual({ text: "98765", noiseDigitsRemoved: 0 });
-    expect(denoiseToken("403507")).toEqual({ text: "403507", noiseDigitsRemoved: 0 });
+    expect(denoiseToken("98765")).toMatchObject({ text: "98765", noiseDigitsRemoved: 0 });
+    expect(denoiseToken("403507")).toMatchObject({ text: "403507", noiseDigitsRemoved: 0 });
+  });
+
+  it("maps every surviving character back to its source offset", () => {
+    // "a92m" -> "am": the 'm' at output index 1 came from input index 3.
+    expect(denoiseToken("a92m").offsetMap).toEqual([0, 3]);
   });
 
   it("keeps interior runs longer than 3 digits (likely real content)", () => {

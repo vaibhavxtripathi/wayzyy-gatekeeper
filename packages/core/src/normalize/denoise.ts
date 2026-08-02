@@ -22,6 +22,15 @@ const MAX_NOISE_RUN = 3;
 export interface DenoiseResult {
   text: string;
   noiseDigitsRemoved: number;
+  /**
+   * offsetMap[i] is the index in the SOURCE text of character i in `text`.
+   *
+   * Removing noise digits shifts every subsequent offset left, so a span found
+   * in the denoised view points at the wrong characters in the raw message.
+   * The policy layer masks on raw offsets, so without this map it redacts the
+   * wrong substring — and can leave the recovered number visible.
+   */
+  offsetMap: number[];
 }
 
 function isLetter(ch: string | undefined): boolean {
@@ -36,24 +45,30 @@ function isDigit(ch: string | undefined): boolean {
  * Strip interior noise digits from a single token.
  * Returns the cleaned token and how many digits were dropped.
  */
-export function denoiseToken(token: string): DenoiseResult {
+export function denoiseToken(token: string, baseOffset = 0): DenoiseResult {
   const chars = [...token];
 
   // Only alphabetic tokens are candidates — a token with no letters is a
   // number, price, or PIN code and must survive untouched.
   if (!chars.some((c) => /\p{L}/u.test(c))) {
-    return { text: token, noiseDigitsRemoved: 0 };
+    return {
+      text: token,
+      noiseDigitsRemoved: 0,
+      offsetMap: chars.map((_, i) => baseOffset + i),
+    };
   }
 
   let out = "";
   let removed = 0;
   let i = 0;
+  const offsetMap: number[] = [];
 
   while (i < chars.length) {
     const ch = chars[i]!;
 
     if (!isDigit(ch)) {
       out += ch;
+      offsetMap.push(baseOffset + i);
       i++;
       continue;
     }
@@ -69,13 +84,17 @@ export function denoiseToken(token: string): DenoiseResult {
     if (runLength <= MAX_NOISE_RUN && hasLetterBefore && hasLetterAfter) {
       removed += runLength; // interior noise → drop
     } else {
-      out += chars.slice(i, j).join(""); // boundary/standalone → keep
+      // boundary/standalone → keep
+      for (let k = i; k < j; k++) {
+        out += chars[k]!;
+        offsetMap.push(baseOffset + k);
+      }
     }
 
     i = j;
   }
 
-  return { text: out, noiseDigitsRemoved: removed };
+  return { text: out, noiseDigitsRemoved: removed, offsetMap };
 }
 
 /**
@@ -83,27 +102,34 @@ export function denoiseToken(token: string): DenoiseResult {
  * so downstream spans stay meaningful.
  */
 export function denoise(text: string): DenoiseResult {
+  const chars = [...text];
   let out = "";
   let removed = 0;
   let buffer = "";
+  let bufferStart = 0;
+  const offsetMap: number[] = [];
 
   const flush = () => {
     if (buffer === "") return;
-    const result = denoiseToken(buffer);
+    const result = denoiseToken(buffer, bufferStart);
     out += result.text;
     removed += result.noiseDigitsRemoved;
+    offsetMap.push(...result.offsetMap);
     buffer = "";
   };
 
-  for (const ch of text) {
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i]!;
     if (SEPARATOR_RE.test(ch)) {
       flush();
       out += ch;
+      offsetMap.push(i);
     } else {
+      if (buffer === "") bufferStart = i;
       buffer += ch;
     }
   }
   flush();
 
-  return { text: out, noiseDigitsRemoved: removed };
+  return { text: out, noiseDigitsRemoved: removed, offsetMap };
 }

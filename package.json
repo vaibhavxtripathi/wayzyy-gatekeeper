@@ -12,7 +12,9 @@
     "bench": "tsx scripts/run-benchmark.ts",
     "train:classifier": "tsx scripts/train-classifier.ts",
     "mine:rules": "tsx scripts/mine-rules.ts",
-    "smoke:groq": "tsx scripts/smoke-groq.ts"
+    "smoke:groq": "tsx scripts/smoke-groq.ts",
+    "demo": "pnpm --filter @gatekeeper/playground dev",
+    "build:playground": "pnpm --filter @gatekeeper/playground build"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

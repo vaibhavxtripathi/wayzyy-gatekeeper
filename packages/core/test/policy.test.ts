@@ -143,3 +143,37 @@ describe("async mode", () => {
     expect(pending.categories).toEqual(["contact.phone"]);
   });
 });
+
+/**
+ * Detector spans are found on normalized views. Removing noise digits shifts
+ * every later offset left, so an unmapped span masks the WRONG substring —
+ * and can leave the recovered number visible in the delivered message. Tier 1
+ * maps run spans back to raw offsets; this locks that in.
+ */
+describe("span alignment against the raw message", () => {
+  it("masks the number, not the surrounding words", async () => {
+    const { moderate } = await import("../src/index.js");
+    const trigramModel = (await import("../../../data/trigrams/model.json", { with: { type: "json" } })).default;
+
+    const text = "hi i a92m a121ksh35ay call me on nine eight 7 six zero";
+    const engineResult = moderate(
+      {
+        message_id: "m",
+        conversation_id: "c",
+        sender_role: "guest",
+        booking_stage: "pre_booking",
+        text,
+      },
+      { trigramModel: trigramModel as never },
+    );
+
+    const phone = engineResult.spans.find((s) => s.type.startsWith("contact.phone"));
+    expect(phone).toBeDefined();
+    expect(text.slice(phone!.start, phone!.end)).toBe("nine eight 7 six zero");
+
+    const masked = applyPolicy(engineResult, text, { preferMasking: true }).deliveredText!;
+    // The spelled-out number must be gone from the delivered text.
+    expect(masked).not.toContain("nine eight");
+    expect(masked).not.toContain("six zero");
+  });
+});

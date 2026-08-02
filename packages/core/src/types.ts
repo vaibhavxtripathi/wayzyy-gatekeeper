@@ -73,8 +73,14 @@ export interface NormalizedViews {
   denoised: string;
   /** + number-words expanded to digits, separators unified. */
   digitized: string;
-  /** Candidate digit sequences with provenance. */
+  /** Candidate digit sequences with provenance. Spans are RAW offsets. */
   digitRuns: DigitRun[];
+  /**
+   * Maps a `denoised` index back to its index in `raw`. Detector spans found
+   * on the denoised view must be translated through this before they are used
+   * to mask the original message.
+   */
+  denoisedOffsetMap: number[];
   /** Signals surfaced by normalization itself. */
   signals: NormalizationSignals;
 }
