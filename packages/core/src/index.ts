@@ -3,10 +3,11 @@
  *
  * Cost-descending cascade (SPEC §0): free deterministic tiers resolve the vast
  * majority of messages; only borderline traffic escalates. Tiers land in build
- * order (SPEC §12) — Tiers 1-3 are in place; Tier 4 arrives at step 7.
+ * order (SPEC §12) — Tiers 1-4 are in place; Tier 5 arrives at step 8.
  */
 
 import { now } from "./clock.js";
+import { classify, type ClassifierModel } from "./classifier/index.js";
 import { runDetectors } from "./detectors/index.js";
 import { normalize } from "./normalize/index.js";
 import { RiskEngine, bandFor, type Band } from "./risk/index.js";
@@ -29,6 +30,11 @@ export interface ModerateOptions {
    * loaded, because core does no fs I/O (SPEC §1). Omit to skip weirdness.
    */
   trigramModel?: TrigramModel;
+  /**
+   * Tier 4 classifier (SPEC §7). Omit to skip Tier 4, in which case the
+   * escalation band resolves as `review`.
+   */
+  classifierModel?: ClassifierModel;
   /** Tier 3 weights and bands. Defaults to DEFAULT_RISK_CONFIG. */
   config?: RiskConfig;
   /** Injected clock, so tests and benchmarks are deterministic. */
@@ -75,6 +81,26 @@ export function moderate(req: ModerateRequest, options: ModerateOptions = {}): M
 
   const band = bandFor(breakdown.score, config);
 
+  // Tier 4 only runs on the band Tier 3 could not resolve — that is the whole
+  // point of the cascade, and it is also what the classifier was trained on.
+  const tier4 =
+    band === "escalate" && options.classifierModel !== undefined
+      ? classify(
+          {
+            detections,
+            signals: views.signals,
+            digitRuns: views.digitRuns,
+            text: views.folded,
+            weirdTokenCount: weirdness?.weirdTokenCount ?? 0,
+            riskScore: breakdown.score,
+            digitPressure: 0,
+            role: req.sender_role,
+            stage: req.booking_stage,
+          },
+          options.classifierModel,
+        )
+      : null;
+
   return buildResult({
     band,
     detections,
@@ -83,6 +109,7 @@ export function moderate(req: ModerateRequest, options: ModerateOptions = {}): M
     weirdness,
     breakdown,
     started,
+    tier4,
   });
 }
 
@@ -119,6 +146,24 @@ export async function moderateStateful(
     nowMs,
   });
 
+  const tier4 =
+    assessment.band === "escalate" && options.classifierModel !== undefined
+      ? classify(
+          {
+            detections: [...detections, ...assessment.rescanDetections],
+            signals: views.signals,
+            digitRuns: views.digitRuns,
+            text: views.folded,
+            weirdTokenCount: weirdness?.weirdTokenCount ?? 0,
+            riskScore: assessment.breakdown.score,
+            digitPressure: assessment.state.digitPressure,
+            role: req.sender_role,
+            stage: req.booking_stage,
+          },
+          options.classifierModel,
+        )
+      : null;
+
   return buildResult({
     band: assessment.band,
     detections: [...detections, ...assessment.rescanDetections],
@@ -127,6 +172,7 @@ export async function moderateStateful(
     weirdness,
     breakdown: assessment.breakdown,
     started,
+    tier4,
     extraSignals: {
       digit_pressure: round(assessment.state.digitPressure),
       session_intent_hits: assessment.state.intentHits,
@@ -149,11 +195,14 @@ interface BuildResultInput {
   weirdness: ReturnType<typeof messageWeirdness> | null;
   breakdown: ReturnType<typeof scoreMessage>;
   started: number;
+  /** Tier 4 output, present only when Tier 3 escalated (SPEC §7). */
+  tier4?: ReturnType<typeof classify> | null;
   extraSignals?: Record<string, unknown>;
 }
 
 function buildResult(input: BuildResultInput): ModerateResult {
   const { band, detections, intentHits, views, weirdness, breakdown, started } = input;
+  const tier4 = input.tier4 ?? null;
 
   const categories: Category[] = [...new Set(detections.map((d) => d.type))];
   const spans: Span[] = detections.map((d) => ({
@@ -162,13 +211,51 @@ function buildResult(input: BuildResultInput): ModerateResult {
     type: d.type,
   }));
 
-  // Tier 4 lands at build step 7; until then an escalate band resolves as
-  // `review` rather than silently allowing, which is the conservative reading
-  // of SPEC §2's failure policy.
-  const verdict: Verdict = band === "allow" ? "allow" : band === "block" ? "block" : "review";
-  const resolvedBy: ResolvedBy = band === "allow" && detections.length === 0
-    ? "tier1.normalize"
-    : "tier3.risk";
+  // Tier 3 bands resolve directly; only the escalate band consults Tier 4.
+  // Where Tier 4 is absent or still uncertain, the verdict stays `review`
+  // rather than silently allowing — the conservative reading of the SPEC §2
+  // failure policy, and the hand-off point for Tier 5 at build step 8.
+  let verdict: Verdict;
+  let resolvedBy: ResolvedBy;
+
+  if (band === "allow") {
+    verdict = "allow";
+    resolvedBy = detections.length === 0 ? "tier1.normalize" : "tier3.risk";
+  } else if (band === "block") {
+    verdict = "block";
+    resolvedBy = "tier3.risk";
+  } else if (tier4 !== null && tier4.decision !== "escalate") {
+    // Tier 4 resolves UNCERTAINTY; it must never overturn hard evidence.
+    // A statistical model trained on a finite corpus will confidently allow
+    // patterns it has not seen — "my digits: nine seven double three ..."
+    // scored p=0.004 despite Tier 2 having found a contact fragment. Letting
+    // that downgrade a deterministic detection would make the cheap, reliable
+    // tiers subordinate to the one that generalises worst.
+    // "Hard" means a RECOVERED identifier, not merely a contact-shaped hint.
+    // Partials, bare handles and plain URLs are exactly the ambiguity Tier 4
+    // exists to adjudicate — guarding those too would pin every borderline
+    // legitimate message ("is there a landline in the room?") at review and
+    // spend the friction budget defending against a hypothetical.
+    const hasHardEvidence = detections.some(
+      (d) =>
+        d.type === "contact.phone" ||
+        d.type === "contact.phone.obfuscated" ||
+        d.type.startsWith("contact.email") ||
+        d.type.startsWith("payment.upi") ||
+        d.type === "contact.url.messenger",
+    );
+
+    if (tier4.decision === "allow" && hasHardEvidence) {
+      verdict = "review";
+      resolvedBy = "tier4.classifier";
+    } else {
+      verdict = tier4.decision === "block" ? "block" : "allow";
+      resolvedBy = "tier4.classifier";
+    }
+  } else {
+    verdict = "review";
+    resolvedBy = tier4 !== null ? "tier4.classifier" : "tier3.risk";
+  }
 
   return {
     verdict,
@@ -192,6 +279,9 @@ function buildResult(input: BuildResultInput): ModerateResult {
       ...(weirdness !== null
         ? { weirdness: round(weirdness.score), weird_tokens: weirdness.weirdTokenCount }
         : {}),
+      ...(tier4 !== null
+        ? { classifier_p: round(tier4.probability), classifier_decision: tier4.decision }
+        : {}),
       ...(input.extraSignals ?? {}),
     },
     latency_ms: now() - started,
@@ -206,6 +296,8 @@ function round(value: number): number {
 export { normalize } from "./normalize/index.js";
 export { runDetectors } from "./detectors/index.js";
 export { messageWeirdness, scoreToken, percentile } from "./weirdness/index.js";
+export { classify, predictProbability, extractFeatures } from "./classifier/index.js";
+export type { ClassifierModel, ClassifierResult, FeatureInput } from "./classifier/index.js";
 export type { TrigramModel, MessageWeirdness, TokenScore } from "./weirdness/index.js";
 export * from "./risk/index.js";
 export * from "./types.js";

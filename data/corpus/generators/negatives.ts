@@ -27,7 +27,8 @@ export type NegativeKind =
   | "intent-word-trap"
   | "phone-model"
   | "review-talk"
-  | "ordinary-chat";
+  | "ordinary-chat"
+  | "borderline";
 
 export interface NegativeEntry {
   id: string;
@@ -92,6 +93,49 @@ const REVIEW_TALK = [
   "the review section says checkout is flexible, is that right?",
   "happy to leave a good review, the stay was perfect",
   "i am writing my review now, what is the exact address for reference?",
+];
+
+/**
+ * Genuinely BORDERLINE legitimate messages — the ones that should land in the
+ * escalation band and be resolved as allow.
+ *
+ * Without these the band contains only positives, and Tier 4 trains on a
+ * single class: it learns nothing about where the boundary actually is, scores
+ * a perfectly separable set, and reports a meaningless 100% accuracy. These
+ * mention channels, numbers and money in innocent ways — exactly the shape of
+ * an evasion attempt, minus the intent.
+ */
+const BORDERLINE = [
+  "is there a landline in the room i can use?",
+  "my phone has no signal here, is there wifi calling?",
+  "do you have a whatsapp business account for the property?",
+  "i saw your listing on instagram, is it the same place?",
+  "the booking app keeps crashing when i try to message you",
+  "can i call the front desk from the room phone?",
+  "is there a number for the local taxi service?",
+  "my number changed since the booking, should i update it in the app?",
+  "the emergency contact number in the house manual is smudged",
+  "do you have a direct line for the caretaker in case of emergency?",
+  "i tried calling the number listed on the app but no answer",
+  "please send the address through the app so i have it saved",
+  "the wifi name has a number in it, is it 5g or 2 4g?",
+  "we will pay the balance through the platform as agreed",
+  "can we settle the extra charges on the app itself?",
+  "is the security deposit refundable through the same payment method?",
+  "i will book the extra night directly on the app now",
+  "my friend wants to book the same villa, should she use the app?",
+  "the price on instagram looked different from the app",
+  "someone messaged me on whatsapp claiming to be you, is that real?",
+  "i got a text asking for payment outside the app, is it legitimate?",
+  "please confirm you never ask for payment over whatsapp",
+  "the review i left mentions the wifi password issue",
+  "i mentioned the gate code in my review by mistake, can it be edited?",
+  "can you call me through the app if there is a problem?",
+  "does the app support voice calls between guest and host?",
+  "i am not comfortable sharing my number, can we keep it in the app?",
+  "the listing says contact host, but the button does nothing",
+  "how many digits is the gate code, 4 or 6?",
+  "the taxi driver asked for the house number and pin code",
 ];
 
 const ORDINARY = [
@@ -335,6 +379,10 @@ export function generateNegatives(target = 1000, seed = 131313): NegativeEntry[]
   // --- review talk without threats ----------------------------------------
   for (const text of REVIEW_TALK) push(text, "review-talk");
   for (let i = 0; i < 55; i++) push(pick(REVIEW_TALK, rng), "review-talk");
+
+  // --- borderline: legitimate but evasion-shaped ---------------------------
+  for (const text of BORDERLINE) push(text, "borderline");
+  for (let i = 0; i < 60; i++) push(pick(BORDERLINE, rng), "borderline");
 
   // --- ordinary chat, padded to target ------------------------------------
   for (const text of ORDINARY) push(text, "ordinary-chat");

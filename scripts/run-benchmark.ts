@@ -18,6 +18,7 @@ import { moderate, moderateStateful } from "../packages/core/src/index.js";
 import { DEFAULT_RISK_CONFIG } from "../packages/core/src/risk/config.js";
 import { MemorySessionStore } from "../packages/core/src/risk/state.js";
 import type { TrigramModel } from "../packages/core/src/weirdness/index.js";
+import type { ClassifierModel } from "../packages/core/src/classifier/index.js";
 import type { ModerateResult, Verdict } from "../packages/core/src/types.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,6 +54,15 @@ function loadJsonl<T>(path: string): T[] {
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => JSON.parse(l) as T);
+}
+
+function loadClassifier(): ClassifierModel | undefined {
+  const path = resolve(ROOT, "data/classifier/model.json");
+  if (!existsSync(path)) {
+    console.warn("no classifier model — run `pnpm train:classifier` for Tier 4\n");
+    return undefined;
+  }
+  return JSON.parse(readFileSync(path, "utf8")) as ClassifierModel;
 }
 
 function loadModel(): TrigramModel | undefined {
@@ -95,10 +105,14 @@ function pct(value: number): string {
 
 async function main(): Promise<void> {
   const model = loadModel();
+  const classifierModel = loadClassifier();
   const adversarial = loadJsonl<AdversarialEntry>(resolve(ROOT, "data/corpus/adversarial.jsonl"));
   const negatives = loadJsonl<NegativeEntry>(resolve(ROOT, "data/corpus/negatives.jsonl"));
 
-  const options = model !== undefined ? { trigramModel: model } : {};
+  const options = {
+    ...(model !== undefined ? { trigramModel: model } : {}),
+    ...(classifierModel !== undefined ? { classifierModel } : {}),
+  };
   const rows: Row[] = [];
   const latencies: number[] = [];
 
@@ -208,8 +222,11 @@ async function main(): Promise<void> {
 
   const tier5Count = tiers.get("tier5.llm") ?? 0;
   const tier5Share = tier5Count / rows.length;
+  // Anything still `review` after Tier 4 is what Tier 5 would adjudicate.
   const escalatedShare =
     rows.filter((r) => r.result.verdict === "review").length / rows.length;
+  const tier4Count = tiers.get("tier4.classifier") ?? 0;
+  const resolvedBelowTier4 = (rows.length - tier4Count) / rows.length;
 
   // --- cost ----------------------------------------------------------------
   // Only Tier 5 costs money. Until it lands (build step 8), the escalated
@@ -230,6 +247,7 @@ async function main(): Promise<void> {
   console.log(line);
   console.log(`corpus: ${adversarial.length} adversarial + ${negatives.length} negatives = ${rows.length} evaluations`);
   console.log(`weirdness model: ${model !== undefined ? `loaded (threshold ${model.threshold})` : "NOT LOADED"}`);
+  console.log(`classifier:      ${classifierModel !== undefined ? `loaded (${Object.keys(classifierModel.weights).length} weights, held-out ${((classifierModel.meta.heldOutAccuracy ?? 0) * 100).toFixed(1)}%)` : "NOT LOADED"}`);
   console.log(`bands: allow < ${DEFAULT_RISK_CONFIG.bands.low} | block > ${DEFAULT_RISK_CONFIG.bands.high}`);
 
   console.log(`\n${line}`);
@@ -280,9 +298,14 @@ async function main(): Promise<void> {
   for (const [tier, count] of [...tiers].sort((a, b) => b[1] - a[1])) {
     console.log(`  ${pad(tier, 26)} ${pad(String(count), 8)} ${pct(count / rows.length)}`);
   }
-  const resolvedByTier3 = 1 - escalatedShare;
-  console.log(`\nresolved at ≤ tier 3   ${pct(resolvedByTier3)}   target ≥ 92.00%   ${verdictOf(resolvedByTier3 >= 0.92)}`);
-  console.log(`escalated to tier 4/5  ${pct(escalatedShare)}   target ≤ ${pct(TARGETS.tier5Share)}   ${verdictOf(escalatedShare <= TARGETS.tier5Share)}`);
+  console.log(`\nresolved at ≤ tier 3   ${pct(resolvedBelowTier4)}   target ≥ 92.00%   ${verdictOf(resolvedBelowTier4 >= 0.92)}`);
+  console.log(`handled by tier 4      ${pct(tier4Count / rows.length)}`);
+  // Tiers 1-4 are all free and local; only Tier 5 costs money or latency.
+  // The ≥92% target exists to bound LLM spend, so the number that matters
+  // operationally is this one, reported alongside the literal SPEC §6 metric.
+  const resolvedLocally = 1 - escalatedShare;
+  console.log(`resolved without llm   ${pct(resolvedLocally)}   (tiers 1-4, all free)`);
+  console.log(`would reach tier 5     ${pct(escalatedShare)}   target ≤ ${pct(TARGETS.tier5Share)}   ${verdictOf(escalatedShare <= TARGETS.tier5Share)}`);
 
   console.log(`\n${line}`);
   console.log("COST (projected from tier distribution × Groq pricing)");

@@ -29,6 +29,12 @@ interface Chunk {
   ambiguous: boolean;
   /** Ambiguous AND an extremely common English word; needs both neighbours. */
   highRisk: boolean;
+  /**
+   * True when the digits came from a multiplier ("double three" -> 33).
+   * Such a chunk is dictation, not a quantity, so it still anchors an
+   * adjacent ambiguous word despite being more than one digit long.
+   */
+  fromMultiplier: boolean;
 }
 
 const SEPARATOR_CHARS = /[\s_\-.,;:]/u;
@@ -85,6 +91,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         sepBefore: token.sepBefore,
         ambiguous: false,
         highRisk: false,
+        fromMultiplier: multiplier !== null,
       },
     ];
   }
@@ -106,6 +113,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         sepBefore: token.sepBefore,
         ambiguous: AMBIGUOUS_WORDS.has(stripped),
         highRisk: HIGH_RISK_AMBIGUOUS.has(stripped),
+        fromMultiplier: multiplier !== null,
       },
     ];
   }
@@ -127,6 +135,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         sepBefore: token.sepBefore,
         ambiguous: AMBIGUOUS_WORDS.has(letterPart),
         highRisk: HIGH_RISK_AMBIGUOUS.has(letterPart),
+        fromMultiplier: multiplier !== null,
       });
     }
     if (digitPart.length > 0) {
@@ -138,6 +147,7 @@ function tokenToChunks(token: Token, multiplier: number | null): Chunk[] {
         sepBefore: chunks.length > 0 ? "" : token.sepBefore,
         ambiguous: false,
         highRisk: false,
+        fromMultiplier: false,
       });
     }
     if (chunks.length > 0) return chunks;
@@ -215,18 +225,16 @@ export function extractDigitRuns(text: string, options: ExtractOptions = {}): Di
       if (chunk.ambiguous) {
         const prev = chunks[i - 1];
         const next = chunks[i + 1];
+        const isDictation = (n: Chunk) => n.digits.length === 1 || n.fromMultiplier;
         const neighbours = [prev, next].filter((n) => n !== undefined);
-        accepted = neighbours.length > 0 && neighbours.every((n) => n!.digits.length === 1);
+        accepted = neighbours.length > 0 && neighbours.every((n) => isDictation(n!));
 
         // High-risk words ("for", "no", "one") need single-digit neighbours on
         // BOTH sides. One is not enough: "booking for 7 people" and "house no
         // 1" are ordinary sentences that would otherwise yield 47 and 91.
         if (accepted && chunk.highRisk) {
           accepted =
-            prev !== undefined &&
-            next !== undefined &&
-            prev.digits.length === 1 &&
-            next.digits.length === 1;
+            prev !== undefined && next !== undefined && isDictation(prev) && isDictation(next);
         }
       }
 

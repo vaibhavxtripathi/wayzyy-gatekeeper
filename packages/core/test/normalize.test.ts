@@ -127,6 +127,15 @@ describe("digit run merging", () => {
     expect(extractDigitRuns("double five triple 9")[0]?.digits).toBe("55999");
   });
 
+  it("keeps a multiplied chunk inside the surrounding dictated run", () => {
+    // "double three" expands to 33, but that is dictation, not a quantity.
+    // Treating it as multi-digit split the run into 9733 + 24568 and dropped
+    // the number below the block band.
+    expect(extractDigitRuns("nine seven double three one two four five six eight")[0]?.digits).toBe(
+      "9733124568",
+    );
+  });
+
   it("does not invent runs from ordinary words", () => {
     expect(extractDigitRuns("do you want to book for one")).toEqual([]);
     expect(extractDigitRuns("call it a day")).toEqual([]);
