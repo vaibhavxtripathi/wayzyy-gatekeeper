@@ -15,6 +15,9 @@ export const INTENT_CHANNEL = [
   "instagram", "insta", "insta gram", "ig", "igdm",
   "facebook", "fb", "messenger",
   "sms", "text message", "email me", "mail me", "gmail",
+  "linkedin", "linked in", "youtube", "you tube", "tiktok", "tik tok",
+  "discord", "reddit", "pinterest", "threads", "bluesky", "wechat", "line",
+  "botim", "imo", "hike", "josh", "moj", "sharechat",
 ];
 
 export const INTENT_ACTION = [
@@ -27,6 +30,18 @@ export const INTENT_ACTION = [
   "apna number", "mera number", "my number is", "number is",
   "send your number", "share your number", "no. de do",
   "contact number", "mobile number", "mob no", "cell number",
+  // Red team found these: the lexicon covered OFFERING contact info
+  // ("my number is", "call me") but almost nothing for REQUESTING it, which
+  // is just as much a leak and is how a host would actually phrase it.
+  "send me your number", "send your number", "send me ur number",
+  "give me your number", "give your number", "share your contact",
+  "your number please", "whats your number", "what is your number",
+  "can i have your number", "may i have your number", "drop your number",
+  "send me your contact", "send your contact", "send me your details",
+  "send me a message on", "message me on", "send me a link to your profile",
+  "your profile link", "add me on", "find me on", "follow me on",
+  "connect with me on", "send me your handle", "whats your handle",
+  "aapka number", "number bhej do", "number bhej dijiye", "number share karo",
 ];
 
 export const INTENT_OFFPLATFORM = [

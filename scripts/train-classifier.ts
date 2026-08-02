@@ -113,6 +113,17 @@ function buildSample(
   };
 }
 
+/**
+ * True when the deterministic tiers found any contact/safety/intent signal.
+ * Used to filter red-team output, whose labels are the generator's opinion.
+ */
+function hasAnySignal(text: string, trigramModel: TrigramModel | undefined): boolean {
+  void trigramModel;
+  const views = normalize(text);
+  const { detections } = runDetectors(views);
+  return detections.length > 0 || views.signals.noiseDigitsRemoved > 0 || views.digitRuns.length > 0;
+}
+
 /** Deterministic shuffle, so training runs are reproducible. */
 function shuffle<T>(items: T[], seed: number): T[] {
   const out = [...items];
@@ -136,6 +147,44 @@ function main(): void {
   console.log("building feature vectors…");
 
   const samples: Sample[] = [];
+
+  // Red-team misses first: these are the messages the engine demonstrably got
+  // wrong, so they carry more information per example than anything the
+  // generators produce. The SPEC §8 loop is only real if they feed back in.
+  const minedPath = resolve(ROOT, "data/corpus/mined.jsonl");
+  let minedCount = 0;
+  if (existsSync(minedPath)) {
+    for (const line of readFileSync(minedPath, "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      try {
+        const entry = JSON.parse(line) as { text?: string; technique?: string };
+        if (typeof entry.text !== "string") continue;
+
+        // A red-team generator mislabels: it returns ordinary messages
+        // ("what's your time zone?") as attacks. Training those as positives
+        // teaches the classifier that innocuous text is a violation, which is
+        // how a self-play loop poisons itself. Only keep messages the
+        // deterministic tiers found SOMETHING in — a human still reviews the
+        // rest via `pnpm mine:rules`.
+        const sample = buildSample(
+          entry.text,
+          1,
+          `mined:${entry.technique ?? "?"}`,
+          "guest",
+          "pre_booking",
+          trigramModel,
+        );
+        if (!hasAnySignal(entry.text, trigramModel)) continue;
+
+        samples.push(sample);
+        minedCount++;
+      } catch {
+        // Skip malformed rows rather than failing the run.
+      }
+    }
+  }
+  if (minedCount > 0) console.log(`  ${minedCount} red-team misses folded in`);
+
   for (const entry of adversarial) {
     // The first half of a split number is genuinely innocuous on its own; it
     // is relationship state that convicts it, not the text. Labeling it

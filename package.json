@@ -14,7 +14,8 @@
     "mine:rules": "tsx scripts/mine-rules.ts",
     "smoke:groq": "tsx scripts/smoke-groq.ts",
     "demo": "pnpm --filter @gatekeeper/playground dev",
-    "build:playground": "pnpm --filter @gatekeeper/playground build"
+    "build:playground": "pnpm --filter @gatekeeper/playground build",
+    "redteam": "tsx scripts/red-team.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

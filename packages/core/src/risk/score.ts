@@ -111,12 +111,39 @@ export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakd
   // accumulate no other signal — yet they are exactly the disintermediation
   // the product exists to stop. Without a floor they score below the allow
   // band and are delivered untouched.
-  if (offPlatform > 0) {
+  //
+  // The same applies to naming a channel AND asking to move to it ("dm me on
+  // whatsapp"): neither hit is decisive alone, but together they are a request
+  // to leave the platform, and the red team walked straight through the gap
+  // between them.
+  // Explicitly asking for a phone number is unambiguous on its own — no
+  // channel, no digits, no second signal to accumulate. "can you send me your
+  // number?" scored 1.1 and was delivered until the red team found it.
+  const asksForNumber = input.detections.some(
+    (d) =>
+      d.type.startsWith("intent.contact") &&
+      /\b(?:number|contact|handle|details)\b/.test(d.evidence) &&
+      /\b(?:send|give|share|drop|have|whats|what is|bhej|de do)\b/.test(d.evidence),
+  );
+
+  const channelPlusAction = count("intent.channel") > 0 && count("intent.contact") > 0;
+  if (offPlatform > 0 || channelPlusAction || asksForNumber) {
     const floor = w.offPlatformFloor - contact;
     if (floor > 0) {
       contact += floor;
       add("offPlatformFloor", floor);
     }
+  }
+
+  // A contact request sitting next to a full-length digit run is a number
+  // being shared, even when it fails country validation ("my number is
+  // 1234567890"). Requiring a VALID number here would mean any non-IN or
+  // fictional number sails through next to an explicit "my number is".
+  const longRun = input.digitRuns.some((r) => r.digits.length >= 10);
+  const askingForContact = count("intent.contact") > 0;
+  if (longRun && askingForContact && !has("contact.phone")) {
+    contact += w.validPhone * 0.75;
+    add("unvalidatedNumber", w.validPhone * 0.75);
   }
 
   // w7 · handle

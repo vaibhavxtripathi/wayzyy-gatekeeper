@@ -342,3 +342,47 @@ describe("hard negatives are allowed at tier 3", () => {
     });
   }
 });
+
+/**
+ * Gaps the live red team found (SPEC §10). Each was a real leak the labelled
+ * corpus did not contain, which is the argument for running the loop at all:
+ * a corpus can only test the evasions someone already thought of.
+ */
+describe("red-team regressions", () => {
+  const cases: string[] = [
+    // The lexicon covered OFFERING contact info but not REQUESTING it.
+    "can you send me your number?",
+    "whats your number",
+    "aapka number bhej do",
+    "Can you send me a link to your profile on LinkedIn?",
+    "Can you send me a message on Telegram?",
+    // Naming a channel AND asking to move to it: neither hit is decisive
+    // alone, and the attacker walked through the gap between them.
+    "dm me on whatsapp",
+    "Can you DM me on WhatsApp for the booking?",
+    // A full-length run next to "my number is", failing country validation.
+    "My number is 1234567890, but you can call me on +91 1234567890",
+  ];
+
+  for (const text of cases) {
+    it(`stops: "${text.slice(0, 46)}"`, () => {
+      expect(moderate(req(text), { trigramModel: MODEL }).verdict).not.toBe("allow");
+    });
+  }
+
+  /** The same fixes must not start flagging ordinary hospitality talk. */
+  const stillAllowed: string[] = [
+    "I'm available on 9 PM IST, what's your time?",
+    "Can you send me a screenshot of your ID?",
+    "My friend is coming with me, can you accommodate 3 people?",
+    "is there a landline in the room i can use?",
+    "the emergency contact number in the house manual is smudged",
+    "do you have a direct line for the caretaker in case of emergency?",
+  ];
+
+  for (const text of stillAllowed) {
+    it(`allows: "${text.slice(0, 46)}"`, () => {
+      expect(moderate(req(text), { trigramModel: MODEL }).verdict).toBe("allow");
+    });
+  }
+});
