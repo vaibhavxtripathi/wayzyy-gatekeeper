@@ -6,9 +6,11 @@
   "scripts": {
     "test": "pnpm -r test",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "train:trigrams": "tsx scripts/train-trigrams.ts"
   },
   "devDependencies": {
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },

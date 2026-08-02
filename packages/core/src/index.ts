@@ -9,13 +9,30 @@
 import { now } from "./clock.js";
 import { runDetectors } from "./detectors/index.js";
 import { normalize } from "./normalize/index.js";
+import { messageWeirdness, type TrigramModel } from "./weirdness/index.js";
 import type { Category, ModerateRequest, ModerateResult } from "./types.js";
 
-export function moderate(req: ModerateRequest): ModerateResult {
+export interface ModerateOptions {
+  /**
+   * Trigram model for the weirdness meter (SPEC §5). Injected rather than
+   * loaded, because core does no fs I/O (SPEC §1). Omit to skip weirdness
+   * scoring entirely.
+   */
+  trigramModel?: TrigramModel;
+}
+
+export function moderate(req: ModerateRequest, options: ModerateOptions = {}): ModerateResult {
   const started = now();
 
   const views = normalize(req.text);
   const { detections, intentHits } = runDetectors(views);
+
+  // Weirdness runs on the folded view: confusables are already ASCII, but the
+  // noise digits that make mangling visible are still present.
+  const weirdness =
+    options.trigramModel !== undefined
+      ? messageWeirdness(views.folded, options.trigramModel)
+      : null;
 
   const categories: Category[] = [...new Set(detections.map((d) => d.type))];
   const confidence = detections.reduce((max, d) => Math.max(max, d.confidence), 0);
@@ -36,6 +53,9 @@ export function moderate(req: ModerateRequest): ModerateResult {
       confusables_folded: views.signals.confusablesFolded,
       digit_runs: views.digitRuns.length,
       detections: detections.length,
+      ...(weirdness !== null
+        ? { weirdness: weirdness.score, weird_tokens: weirdness.weirdTokenCount }
+        : {}),
     },
     latency_ms: now() - started,
     cost_usd: 0,
@@ -44,4 +64,6 @@ export function moderate(req: ModerateRequest): ModerateResult {
 
 export { normalize } from "./normalize/index.js";
 export { runDetectors } from "./detectors/index.js";
+export { messageWeirdness, scoreToken, percentile } from "./weirdness/index.js";
+export type { TrigramModel, MessageWeirdness, TokenScore } from "./weirdness/index.js";
 export * from "./types.js";
