@@ -11,7 +11,8 @@
     "build:corpus": "tsx scripts/build-corpus.ts",
     "bench": "tsx scripts/run-benchmark.ts",
     "train:classifier": "tsx scripts/train-classifier.ts",
-    "mine:rules": "tsx scripts/mine-rules.ts"
+    "mine:rules": "tsx scripts/mine-rules.ts",
+    "smoke:groq": "tsx scripts/smoke-groq.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

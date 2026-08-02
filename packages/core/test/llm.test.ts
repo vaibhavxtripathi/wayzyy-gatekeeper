@@ -280,6 +280,30 @@ describe("tier 5 in the cascade", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
+  /**
+   * Verified against the live Groq endpoint: llama-3.1-8b-instant classifies
+   * the PIN code 403507 as a contact leak. The cheap tiers are MORE accurate
+   * than the LLM on this class, so the cascade ordering is what protects the
+   * friction budget — not the model. A refactor that consulted Tier 5 before
+   * or instead of the deterministic tiers would import that error wholesale.
+   */
+  it("never consults the LLM for messages the cheap tiers allow", async () => {
+    const transport = vi.fn(stubTransport({ contact: true, contact_type: "phone" }));
+    const adjudicator = new Adjudicator({ transport });
+
+    for (const text of [
+      "the pin code here is 403507",
+      "our area pincode is 400001",
+      "the total is ₹98,765 for 5 nights",
+      "flight 6E 2134 lands at 9pm",
+    ]) {
+      const result = await moderateAsync(req(text), { ...base, adjudicator });
+      expect(result.verdict, text).toBe("allow");
+    }
+
+    expect(transport).not.toHaveBeenCalled();
+  });
+
   it("blocks pre-booking when the model cannot be reached", async () => {
     const adjudicator = new Adjudicator({
       transport: () => Promise.reject(new Error("down")),
