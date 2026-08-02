@@ -261,7 +261,6 @@ describe("hard negatives stay clean", () => {
     "lets call it a day",
     "i left a 5 star review already, loved it",
     "GST number is 27AAPFU0939F1ZV",
-    "the gate code is 4455",
   ];
 
   for (const text of negatives) {
@@ -289,5 +288,27 @@ describe("handle detector does not read ordinary words as handles", () => {
 
   it("still catches a real handle after a platform name", () => {
     expect(hasType("find me on instagram akshay_travels", "contact.handle")).toBe(true);
+  });
+});
+
+describe("access codes are detected so the stage modifier can judge them", () => {
+  it("flags a gate code so Tier 3 can weigh it by booking stage", () => {
+    // Allowed post-booking, restricted before — see the stage-sensitivity
+    // tests in risk.test.ts. The detector's job is only to surface it.
+    expect(hasType("the gate code is 4455", "contact.address")).toBe(true);
+  });
+});
+
+describe("email obfuscations found by manual testing", () => {
+  it("catches 'at the rate' and letter-spaced 'd o t'", () => {
+    expect(hasType("akshay d o t sharma at the rate gml d o t com", "contact.email")).toBe(true);
+    expect(hasType("akshay at the rate gmail dot com", "contact.email")).toBe(true);
+  });
+});
+
+describe("SMS-style contact requests", () => {
+  it("catches vowel-dropped spellings", () => {
+    expect(hasType("whats ur numbr, ill call", "intent.")).toBe(true);
+    expect(hasType("send ur number", "intent.")).toBe(true);
   });
 });

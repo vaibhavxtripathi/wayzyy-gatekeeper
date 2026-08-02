@@ -331,7 +331,6 @@ describe("hard negatives are allowed at tier 3", () => {
     "iPhone 15 Pro, 256GB",
     "lets call it a day",
     "i left a 5 star review already, loved it",
-    "the gate code is 4455",
     "could i get a refund for the extra night?",
   ];
 
@@ -540,8 +539,7 @@ describe("cross-message evidence is reported separately", () => {
       "the villa is ₹98,765 for 5 nights, 4 adults 2 kids",
       "flight 6E 2134 lands 9:40, can I check in at 2?",
       "pin code 403507",
-      "the gate code is 4455",
-    ]) {
+      ]) {
       const result = await moderateStateful(req(text, { message_id: `m_${text}` }), {
         store,
         trigramModel: MODEL,
@@ -576,5 +574,83 @@ describe("cross-message evidence is reported separately", () => {
         expect(merged.length, `${text} -> ${merged}`).toBeLessThanOrEqual(12);
       }
     }
+  });
+});
+
+/**
+ * SPEC §6 says post-booking relaxes address/gate-code sharing — which only
+ * means something if sharing them BEFORE a booking is restricted. Nothing
+ * detected it, so a host could hand over the property location and door code
+ * to anyone who had not booked.
+ */
+describe("address and access codes are stage-sensitive", () => {
+  const disclosures = [
+    "gate code 4471, villa 9, lane 8",
+    "the address is House 12, Anjuna, near the church",
+    "sharing my live location now",
+  ];
+
+  for (const text of disclosures) {
+    it(`stops pre-booking: "${text.slice(0, 40)}"`, () => {
+      expect(
+        moderate(req(text, { sender_role: "host" }), { trigramModel: MODEL }).verdict,
+      ).not.toBe("allow");
+    });
+
+    it(`allows post-booking: "${text.slice(0, 40)}"`, () => {
+      expect(
+        moderate(req(text, { sender_role: "host", booking_stage: "post_booking" }), {
+          trigramModel: MODEL,
+        }).verdict,
+      ).toBe("allow");
+    });
+  }
+
+  /** Asking about an address is a request, not a disclosure. */
+  for (const text of [
+    "what is the exact address for reference?",
+    "how many digits is the gate code, 4 or 6?",
+    "house no 64, near the temple",
+  ]) {
+    it(`allows the question: "${text.slice(0, 40)}"`, () => {
+      expect(moderate(req(text), { trigramModel: MODEL }).verdict).toBe("allow");
+    });
+  }
+});
+
+/**
+ * Merging tried every contiguous combination of buffered runs, so with enough
+ * digit-bearing messages it eventually assembled 10 digits starting 6-9 by
+ * pure chance — "62134" (flight) + "940" (time) + "15" (iPhone 15) became
+ * 6213494015, and from then on every message blocked.
+ */
+describe("unrelated digits never assemble into a phantom number", () => {
+  it("keeps an ordinary digit-heavy conversation clean", async () => {
+    const store = new MemorySessionStore();
+    const conversation = [
+      "my number is 9876543210",
+      "the villa is ₹98,765 for 5 nights, 4 adults 2 kids",
+      "flight 6E 2134 lands 9:40, can I check in at 2?",
+      "iPhone 15 Pro 256GB",
+      "pin code 403507",
+      "wow",
+      "hi",
+    ];
+
+    const verdicts: string[] = [];
+    for (const [i, text] of conversation.entries()) {
+      const result = await moderateStateful(req(text, { message_id: `m${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+      verdicts.push(result.verdict);
+      const merged = result.signals["merged_fragments"];
+      expect(merged, `${text} fabricated ${String(merged)}`).toBeUndefined();
+    }
+
+    // Only the real phone number should have been stopped.
+    expect(verdicts[0]).toBe("block");
+    expect(verdicts.slice(1).every((v) => v === "allow")).toBe(true);
   });
 });

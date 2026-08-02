@@ -189,6 +189,15 @@ export function scoreMessage(input: ScoreInput, config: RiskConfig): ScoreBreakd
     add("handle", w.handle);
   }
 
+  // Property address / access code. Scored inside the contact block on
+  // purpose: the stage modifier then discounts it heavily post-booking, which
+  // is exactly SPEC §6's "host must share address/gate code" case, while a
+  // host handing out the location BEFORE a booking exists still scores.
+  if (has("contact.address")) {
+    contact += w.address;
+    add("address", w.address);
+  }
+
   // w8 · upi
   if (has("payment.upi")) {
     contact += w.upi;

@@ -22,6 +22,7 @@ export type NegativeKind =
   | "guest-count"
   | "distance"
   | "wifi-password"
+  | "access-code"
   | "gst-number"
   | "post-booking-address"
   | "intent-word-trap"
@@ -321,12 +322,30 @@ export function generateNegatives(target = 1000, seed = 131313): NegativeEntry[]
           `wifi password is sunshine${randInt(rng, 2020, 2026)}`,
           `the wifi is Guest_${randInt(rng, 100, 999)} and password welcome${randInt(rng, 100, 999)}`,
           `network name is villa${randInt(rng, 1, 20)}, password stay${randInt(rng, 1000, 9999)}`,
-          `gate code is ${randInt(rng, 1000, 9999)}`,
-          `the door lock pin is ${randInt(rng, 1000, 9999)}`,
+          `the internet password is ${pick(["stay", "guest", "villa"], rng)}${randInt(rng, 1000, 9999)}`,
         ],
         rng,
       ),
       "wifi-password",
+    );
+  }
+
+  // --- access codes: legitimate ONLY once a booking exists ----------------
+  // A gate code is physical access to the property. Sending it before a
+  // booking is a security problem, not ordinary chat — so these are labelled
+  // post_booking, which is when a host genuinely needs to share them.
+  for (let i = 0; i < 30; i++) {
+    push(
+      pick(
+        [
+          `gate code is ${randInt(rng, 1000, 9999)}`,
+          `the door lock pin is ${randInt(rng, 1000, 9999)}`,
+          `keypad code ${randInt(rng, 1000, 9999)}, ring if it fails`,
+        ],
+        rng,
+      ),
+      "access-code",
+      { stage: "post_booking", sender: "host" },
     );
   }
 

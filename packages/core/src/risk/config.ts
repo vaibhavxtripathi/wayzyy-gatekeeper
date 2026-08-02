@@ -22,6 +22,8 @@ export interface RiskWeights {
   zeroWidthCount: number;
   /** Minimum contact score for a pure off-platform-intent message. */
   offPlatformFloor: number;
+  /** Property address / access code. Heavily discounted post-booking. */
+  address: number;
   email: number;
   confusablesFolded: number;
 }
@@ -79,6 +81,7 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
     digitPressure: 0.35,
     zeroWidthCount: 0.8,
     offPlatformFloor: 3.6,
+    address: 4.2,
     email: 8.5,
     confusablesFolded: 0.4,
   },

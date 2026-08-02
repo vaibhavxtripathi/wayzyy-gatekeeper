@@ -6,6 +6,7 @@
  * is well under the p95 ≤ 25ms target in SPEC §10.
  */
 
+import { detectAddress } from "./address.js";
 import { detectEmail } from "./email.js";
 import { detectHandle } from "./handle.js";
 import { detectIntent, intentHits } from "./intent.js";
@@ -27,6 +28,7 @@ export function runDetectors(views: NormalizedViews): DetectionResult {
   const url = detectUrl(views);
   const handle = detectHandle(views);
   const upi = detectUpi(views);
+  const address = detectAddress(views);
   const intent = detectIntent(views);
   const hostility = detectHostility(views);
   const extortion = detectExtortion(views);
@@ -39,6 +41,7 @@ export function runDetectors(views: NormalizedViews): DetectionResult {
     ...url,
     ...handle,
     ...upi,
+    ...address,
     ...intent,
     ...hostility,
     ...extortion,
@@ -59,6 +62,7 @@ function dedupe(detections: Detection[]): Detection[] {
   return [...best.values()].sort((a, b) => a.span.start - b.span.start || b.confidence - a.confidence);
 }
 
+export { detectAddress } from "./address.js";
 export { detectEmail } from "./email.js";
 export { detectHandle } from "./handle.js";
 export { detectIntent, intentHits } from "./intent.js";

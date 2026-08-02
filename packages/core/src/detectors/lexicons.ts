@@ -42,6 +42,14 @@ export const INTENT_ACTION = [
   "your profile link", "add me on", "find me on", "follow me on",
   "connect with me on", "send me your handle", "whats your handle",
   "aapka number", "number bhej do", "number bhej dijiye", "number share karo",
+  // Vowel-dropped and SMS-style spellings. Real chat is full of these, and a
+  // lexicon of only correct spellings misses "whats ur numbr, ill call"
+  // entirely — which the red team and manual testing both walked through.
+  "ur number", "ur numbr", "ur no", "yr number", "your numbr", "whats ur",
+  "whts ur number", "wats ur number", "number pls", "number plz", "num pls",
+  "send ur number", "send ur numbr", "give ur number", "share ur number",
+  "ill call", "i'll call you", "ill call u", "can i call u", "can i call you",
+  "lemme call", "let me call you", "call u", "call you directly",
 ];
 
 export const INTENT_OFFPLATFORM = [

@@ -27,6 +27,39 @@ function isCompletePhone(digits: string): boolean {
   return /^[6-9]\d{9}$/.test(digits) || /^91[6-9]\d{9}$/.test(digits);
 }
 
+/**
+ * Words that give a digit run an innocent reading. A run sitting next to one
+ * of these is a flight number, a clock time, a room number or a price — not
+ * half of a phone number someone is smuggling out.
+ */
+const BENIGN_NEIGHBOURS =
+  /\b(?:flight|pnr|train|seat|gate|room|villa|flat|apt|floor|lane|door|house|pin|pincode|zip|postal|gst|invoice|ref|booking|order|check|checkin|checkout|night|nights|day|days|adult|adults|kid|kids|guest|guests|person|people|am|pm|rs|inr|price|cost|total|rate|deposit|refund|km|kms|metre|meters|m|gb|mb|tb|iphone|samsung|pixel|pro|max|plus|wifi|password|code)\b/i;
+
+/** How much text on either side counts as "next to" a run. */
+const NEIGHBOUR_WINDOW = 20;
+
+/**
+ * True when a run could plausibly be part of a number split across messages.
+ *
+ * A genuine split ("98765" … "43210") arrives as bare digits with nothing
+ * explaining them. A flight number, a price or a clock time always travels
+ * with a word that gives it meaning — and must never be buffered, or unrelated
+ * fragments eventually assemble into a valid-looking mobile by chance.
+ */
+function isPlausibleFragment(
+  run: { digits: string; sourceSpan: { start: number; end: number } },
+  views: NormalizedViews,
+): boolean {
+  // Very short runs carry almost no information and are usually counts.
+  if (run.digits.length < 3) return false;
+
+  const text = views.denoised;
+  const before = text.slice(Math.max(0, run.sourceSpan.start - NEIGHBOUR_WINDOW), run.sourceSpan.start);
+  const after = text.slice(run.sourceSpan.end, run.sourceSpan.end + NEIGHBOUR_WINDOW);
+
+  return !BENIGN_NEIGHBOURS.test(before) && !BENIGN_NEIGHBOURS.test(after);
+}
+
 export interface AssessInput {
   request: ModerateRequest;
   views: NormalizedViews;
@@ -127,13 +160,28 @@ export class RiskEngine {
       session.fragmentWindowMs,
       session.fragmentBufferSize,
     );
-    // A run that is ALREADY a complete valid number does not belong in the
-    // fragment buffer. Merging exists to reassemble numbers split across
-    // messages; a whole number is caught by Tier 2 on its own turn, and
-    // keeping it around only lets it glue onto later prices and flight
-    // numbers to manufacture matches nobody sent.
+    // Only runs that plausibly belong to a SPLIT phone number are buffered.
+    //
+    // Two exclusions, both learned the hard way:
+    //   - a run that is already a complete valid number was caught on its own
+    //     turn and only glues onto later digits if kept;
+    //   - a run Tier 2 explained as ordinary content — a flight number, a
+    //     clock time, a price, "iPhone 15" — is not a fragment of anything.
+    //     Buffering those let "62134" + "940" + "15" assemble into
+    //     "6213494015", a structurally valid IN mobile that nobody sent, and
+    //     from then on every message blocked.
+    const explainedByTier2 = new Set(
+      detections
+        .filter((d) => !d.type.startsWith("contact.phone"))
+        .flatMap((d) => views.digitRuns
+          .filter((r) => r.sourceSpan.start >= d.span.start && r.sourceSpan.end <= d.span.end)
+          .map((r) => r.digits)),
+    );
+
     const currentFragments = views.digitRuns
       .filter((run) => !isCompletePhone(run.digits))
+      .filter((run) => !explainedByTier2.has(run.digits))
+      .filter((run) => isPlausibleFragment(run, views))
       .map((run) => ({
         run,
         timestamp: nowMs,
