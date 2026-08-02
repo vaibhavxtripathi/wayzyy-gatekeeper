@@ -16,6 +16,10 @@ importers:
         version: 2.1.9
 
   packages/core:
+    dependencies:
+      libphonenumber-js:
+        specifier: ^1.13.10
+        version: 1.13.10
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -392,6 +396,9 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  libphonenumber-js@1.13.10:
+    resolution: {integrity: sha512-xJxrdqvbl2rtn2MaUJrUejz8J7/uZNC0V77oks2LxYrO/+ZtVpRmz+fEQMuu6VusnEB1fmpByiLS1WXecOnAnw==}
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -777,6 +784,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  libphonenumber-js@1.13.10: {}
 
   loupe@3.2.1: {}
 

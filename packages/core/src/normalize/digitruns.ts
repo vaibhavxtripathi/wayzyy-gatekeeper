@@ -155,47 +155,67 @@ export function extractDigitRuns(text: string, options: ExtractOptions = {}): Di
   const runs: DigitRun[] = [];
   let current: Chunk[] = [];
 
-  const flush = () => {
-    if (current.length === 0) return;
+  /** Emit one contiguous group of accepted chunks as a run. */
+  const emit = (segment: Chunk[]) => {
+    if (segment.length === 0) return;
+    // A group of nothing but ambiguous words is ordinary language, not a number.
+    if (segment.every((c) => c.ambiguous)) return;
 
-    // Drop runs made solely of ambiguous words ("do you want to") — those are
-    // ordinary language, not a number. A run is real if it has any
-    // unambiguous chunk, or more than one chunk of evidence.
-    const hasAnchor = current.some((c) => !c.ambiguous);
-    if (!hasAnchor) {
-      current = [];
-      return;
-    }
+    const digits = segment.map((c) => c.digits).join("");
+    if (digits.length < minLength) return;
 
-    // Trim ambiguous chunks hanging off the edges with no numeric neighbour
-    // to anchor them.
-    while (current.length > 0 && current[0]!.ambiguous && current.length === 1) current.shift();
-    if (current.length === 0) return;
-
-    const digits = current.map((c) => c.digits).join("");
-    if (digits.length < minLength) {
-      current = [];
-      return;
-    }
-
-    const wordFormCount = current.filter((c) => c.form === "word").length;
-    const numeralCount = current.filter((c) => c.form === "numeral").length;
+    const wordFormCount = segment.filter((c) => c.form === "word").length;
+    const numeralCount = segment.filter((c) => c.form === "numeral").length;
 
     const separatorTypes = new Set<SeparatorType>();
-    for (let i = 1; i < current.length; i++) {
-      for (const t of classifySeparator(current[i]!.sepBefore)) separatorTypes.add(t);
+    for (let i = 1; i < segment.length; i++) {
+      for (const t of classifySeparator(segment[i]!.sepBefore)) separatorTypes.add(t);
     }
 
     runs.push({
       digits,
-      sourceSpan: { start: current[0]!.start, end: current[current.length - 1]!.end },
+      sourceSpan: { start: segment[0]!.start, end: segment[segment.length - 1]!.end },
       wordFormCount,
       numeralCount,
       separatorTypes: [...separatorTypes],
       mixedForm: wordFormCount > 0 && numeralCount > 0,
     });
+  };
 
+  const flush = () => {
+    if (current.length === 0) return;
+    const chunks = current;
     current = [];
+
+    // Words that double as ordinary language ("for", "to", "one", "do") only
+    // count as digits inside a DICTATED sequence — where every neighbour is
+    // itself a single digit, the way a spoken number reads ("nine eight 7 six
+    // zero"). A multi-digit neighbour means a quantity.
+    //
+    // Without this, "₹98,765 for 5 nights" reads as 765 + for(4) + 5 and is
+    // marked mixedForm: a high-weight evasion signal fired by a price.
+    //
+    // A rejected chunk BREAKS the run rather than being spliced out, otherwise
+    // "765 for 5" would glue into "7655" and feed Tier 3's digit-pressure
+    // accumulator digits that were never adjacent in the text.
+    let segment: Chunk[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      let accepted = true;
+
+      if (chunk.ambiguous) {
+        const neighbours = [chunks[i - 1], chunks[i + 1]].filter((n) => n !== undefined);
+        accepted = neighbours.length > 0 && neighbours.every((n) => n!.digits.length === 1);
+      }
+
+      if (accepted) {
+        segment.push(chunk);
+      } else {
+        emit(segment);
+        segment = [];
+      }
+    }
+    emit(segment);
   };
 
   let pendingMultiplier: number | null = null;

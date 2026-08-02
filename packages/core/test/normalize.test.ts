@@ -132,6 +132,26 @@ describe("digit run merging", () => {
     expect(extractDigitRuns("call it a day")).toEqual([]);
   });
 
+  it("does not expand an ambiguous word next to a multi-digit quantity", () => {
+    // "₹98,765 for 5 nights" must not read as 765 + for(4) + 5. Ambiguous
+    // number-words are only digits inside a dictated single-digit sequence.
+    const runs = extractDigitRuns("98,765 for 5 nights");
+    expect(runs.map((r) => r.digits)).not.toContain("76545");
+    expect(runs.every((r) => !r.mixedForm)).toBe(true);
+  });
+
+  it("splits rather than glues when a chunk is rejected", () => {
+    // Dropping "for" must break the run, not join 765 to 5 as "7655" —
+    // otherwise Tier 3 accumulates digits that were never adjacent.
+    const runs = extractDigitRuns("98,765 for 5 nights");
+    expect(runs.map((r) => r.digits)).not.toContain("7655");
+  });
+
+  it("still expands ambiguous words inside a dictated sequence", () => {
+    // Every neighbour is a single digit, so this IS dictation.
+    expect(extractDigitRuns("nine eight one six zero")[0]?.digits).toBe("98160");
+  });
+
   it("marks pure-numeral runs as not mixed-form", () => {
     const run = extractDigitRuns("9876543210")[0]!;
     expect(run.mixedForm).toBe(false);
