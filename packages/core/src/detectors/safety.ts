@@ -16,6 +16,7 @@ import {
   EXTORTION_CONDITIONAL,
   EXTORTION_DEMAND,
   EXTORTION_LEVERAGE,
+  HOSTILITY_MILD,
   HOSTILITY_SEV1,
   HOSTILITY_SEV2,
   HOSTILITY_SEV3,
@@ -28,23 +29,97 @@ import type { Detection, NormalizedViews } from "../types.js";
 // --- hostility -------------------------------------------------------------
 
 const hostility = new AhoCorasick();
+hostility.addAll(HOSTILITY_MILD, "0");
 hostility.addAll(HOSTILITY_SEV1, "1");
 hostility.addAll(HOSTILITY_SEV2, "2");
 hostility.addAll(HOSTILITY_SEV3, "3");
 hostility.build();
 
-export function detectHostility(views: NormalizedViews): Detection[] {
-  const matches = keepLongest(hostility.search(views.deleet));
+/**
+ * Coarse language aimed at a PERSON rather than a thing.
+ *
+ * "we had a shitty flight" is a complaint; "you shitty little man" is abuse,
+ * and the only difference is what the word attaches to. A second-person
+ * pronoun or possessive immediately before the word (or a direct-address
+ * "your <word>") is the cheap, reliable signal for that.
+ */
+const DIRECTED_AT_PERSON =
+  /\b(?:you|your|ur|u|yours|urself|yourself|thou)\b(?:\s+(?:are|is|r|were|was|being|such|a|an|so|absolute|total|complete|fucking|bloody|damn))*\s*$/i;
 
-  return matches.map((match) => {
-    const severity = Number(match.tag);
+/** How much text before the match counts as "immediately before". */
+const DIRECTION_WINDOW = 16;
+
+/**
+ * Self-censored profanity: `f*ck`, `f**k`, `sh!t`, `b*tch`, `a$$hole`.
+ *
+ * People mask these themselves, and the intent is identical — the whole point
+ * of the spelling is that the reader still reads the word. The Tier 1 views
+ * do not recover them: `denoise`/`deleet` are built for DIGIT obfuscation, so
+ * `f*ck off` reaches the lexicon unchanged and matches nothing.
+ *
+ * Listing every masked spelling does not scale (`f*ck`, `f**k`, `fu*k`,
+ * `f#ck`, …), so this matches the shape instead: the word's first and last
+ * letters with punctuation or repeated symbols standing in for the middle.
+ * Anchored on both ends by a word boundary, so ordinary text with symbols
+ * ("2*4 sockets") cannot trip it.
+ */
+const MASK = "[^a-z0-9\\s]";
+
+const MASKED_PROFANITY: Array<[RegExp, number]> = [
+  // f-word: f, then any mix of masked chars and the real u/c, then k.
+  // Covers f*ck, f**k, fu*k, f#ck, f*ck*ng.
+  [new RegExp(`\\bf(?:${MASK}|[uc]){1,3}k(?:${MASK}?(?:ing|in|er|ed|s))?\\b`, "i"), 2],
+  // sh!t / sh*t / s**t — mild unless directed, same as plain "shit".
+  [new RegExp(`\\bs(?:${MASK}|h){1,2}${MASK}?t(?:ty|s)?\\b`, "i"), 0],
+  // b!tch, a$$hole, c*nt, d!ck
+  [new RegExp(`\\bb(?:${MASK}|i){1,2}tch(?:es)?\\b`, "i"), 2],
+  [new RegExp(`\\ba${MASK}{2}hole\\b`, "i"), 2],
+  [new RegExp(`\\bc(?:${MASK}|u){1,2}nt\\b`, "i"), 2],
+];
+
+export function detectHostility(views: NormalizedViews): Detection[] {
+  const text = views.deleet;
+  const matches = keepLongest(hostility.search(text));
+
+  const detections: Detection[] = matches.map((match) => {
+    let severity = Number(match.tag);
+
+    // Mild terms escalate only when pointed at the other party.
+    if (severity === 0) {
+      const before = text.slice(Math.max(0, match.start - DIRECTION_WINDOW), match.start);
+      severity = DIRECTED_AT_PERSON.test(before) ? 2 : 0;
+    }
+
     return {
       type: `safety.hostility.sev${severity}`,
       span: { start: match.start, end: match.end },
-      confidence: severity === 3 ? 0.95 : severity === 2 ? 0.9 : 0.7,
+      confidence: severity === 3 ? 0.95 : severity === 2 ? 0.9 : severity === 1 ? 0.7 : 0.4,
       evidence: match.term,
     };
   });
+
+  // Self-censored spellings the lexicon cannot hold. Only added where the
+  // lexicon found nothing at that position, so "fucking" is not double-counted.
+  for (const [pattern, baseSeverity] of MASKED_PROFANITY) {
+    const found = pattern.exec(text);
+    if (found === null) continue;
+    if (detections.some((d) => d.span.start <= found.index && d.span.end > found.index)) continue;
+
+    let severity = baseSeverity;
+    if (severity === 0) {
+      const before = text.slice(Math.max(0, found.index - DIRECTION_WINDOW), found.index);
+      severity = DIRECTED_AT_PERSON.test(before) ? 2 : 0;
+    }
+
+    detections.push({
+      type: `safety.hostility.sev${severity}`,
+      span: { start: found.index, end: found.index + found[0].length },
+      confidence: severity >= 2 ? 0.85 : 0.4,
+      evidence: `${found[0]} (self-censored)`,
+    });
+  }
+
+  return detections;
 }
 
 // --- extortion -------------------------------------------------------------

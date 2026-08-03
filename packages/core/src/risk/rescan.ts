@@ -25,6 +25,15 @@ export interface MergedFragment {
   contributingRuns: number;
   /** Time between the first and last contributing fragment. */
   spanMs: number;
+  /**
+   * The exact fragments that produced this merge.
+   *
+   * The caller needs these to CONSUME them once the merge has been acted on.
+   * Left in the buffer, they re-merge on every later message and re-report the
+   * same number forever — so an innocent "thanks, see you on the 9th!" is
+   * blocked for a number recovered three turns earlier and already handled.
+   */
+  contributors: readonly TimestampedRun[];
 }
 
 /**
@@ -72,6 +81,7 @@ export function mergeFragments(
         validPhone,
         contributingRuns: slice.length,
         spanMs: slice[slice.length - 1]!.timestamp - slice[0]!.timestamp,
+        contributors: slice,
       });
     }
   }

@@ -107,6 +107,19 @@ const REVIEW_TALK = [
  * an evasion attempt, minus the intent.
  */
 const BORDERLINE = [
+  // Coarse register aimed at a THING, not a person. Ordinary guest complaints
+  // that a platform must deliver: blocking these mistakes tone for hostility,
+  // which is the same error as delivering "fuck off" — just in the opposite
+  // direction. Added alongside the profanity positives so the benchmark
+  // measures both sides of that line rather than neither.
+  "the wifi is a bit crap honestly",
+  "we had a shitty flight but arrived fine",
+  "damn, that's a great view from the balcony",
+  "wtf is the check in time lol",
+  "traffic sucks at that hour, we'll be late",
+  "the shower pressure sucks a bit but everything else is lovely",
+  "the aircon is crap, can it be fixed before we arrive?",
+  "what a shitty day of travel we had, sorry for the delay",
   "is there a landline in the room i can use?",
   "my phone has no signal here, is there wifi calling?",
   "do you have a whatsapp business account for the property?",

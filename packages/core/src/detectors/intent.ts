@@ -35,6 +35,75 @@ const CONFIDENCE: Record<string, number> = {
   "intent.payment": 0.75,
 };
 
+/**
+ * Proposing to CONTINUE THE CONVERSATION on a named channel.
+ *
+ * The action lexicon covers fixed phrases like "dm me on whatsapp" and
+ * "message me on", but a host does not usually phrase it that way. "it'll be
+ * easier if we just chat on WhatsApp instead" names the channel and proposes
+ * moving to it, yet matched only `intent.channel` — worth 2.0, comfortably
+ * inside the allow band — and was delivered. So were "talk on telegram",
+ * "text on whatsapp" and "move this to whatsapp".
+ *
+ * That is the disintermediation this product exists to stop, arriving in the
+ * most natural possible wording. Enumerating verb×channel phrases does not
+ * scale, so this matches the RELATIONSHIP instead: a conversation-moving verb
+ * within a short window of a channel name.
+ *
+ * Scoped deliberately tight. The verb must be about continuing the
+ * conversation elsewhere, and `INTENT_NEGATIVE_CONTEXT` still suppresses
+ * benign hits, so "we chatted on whatsapp about the booking" — past tense,
+ * reporting — is not what this pattern is aimed at, and a report framing is
+ * suppressed at the scoring layer besides.
+ */
+const MOVE_VERB =
+  /\b(?:chat|chatting|talk|talking|speak|speaking|text|texting|message|messaging|msg|connect|continue|move|switch|shift|take (?:this|it)|do (?:this|it))\b/;
+
+/** Channel names, as a group, for the proximity rule. */
+const CHANNEL_NAME = new RegExp(
+  `\\b(?:${INTENT_CHANNEL.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+);
+
+/** How far apart the verb and the channel may sit and still be one thought. */
+const MOVE_WINDOW = 40;
+
+/**
+ * Someone ELSE did the messaging, or it already happened.
+ *
+ * "i got a text from someone on whatsapp" contains a move verb ("text") near a
+ * channel, but reports an approach rather than proposing one — and reporting a
+ * scam is the message a platform most wants delivered. Tier 3 has a broader
+ * report-framing guard, but it suppresses only the off-platform FLOOR; the raw
+ * weight from this detection still landed the message in `block`. Cheaper and
+ * clearer to not fire in the first place.
+ */
+const THIRD_PARTY_OR_PAST =
+  /\b(?:someone|somebody|a stranger|another guest|another host|some guy|this guy|scammer|fraudster)\b|\bi (?:got|received|had)\b|\bclaiming to be\b|\bpretending to be\b|\b(?:was|were|had been) (?:messaged|texted|contacted|called)\b/;
+
+/**
+ * Find "move the conversation to <channel>" as a proximity relationship.
+ * Returns the span of the channel mention, so masking targets the channel.
+ */
+function detectChannelMove(text: string): Detection | null {
+  // Reporting an approach is not making one.
+  if (THIRD_PARTY_OR_PAST.test(text)) return null;
+
+  const channel = CHANNEL_NAME.exec(text);
+  if (channel === null) return null;
+
+  // The verb must precede the channel: "chat on whatsapp", not "whatsapp is
+  // how my last guest tried to reach me".
+  const before = text.slice(Math.max(0, channel.index - MOVE_WINDOW), channel.index);
+  if (!MOVE_VERB.test(before)) return null;
+
+  return {
+    type: "intent.offplatform",
+    span: { start: channel.index, end: channel.index + channel[0].length },
+    confidence: 0.85,
+    evidence: `proposes continuing on ${channel[0]}`,
+  };
+}
+
 export function detectIntent(views: NormalizedViews): Detection[] {
   // deleet recovers leet-spelled intent words; it is the right view here and
   // (unlike denoised) leaves word boundaries intact.
@@ -59,6 +128,16 @@ export function detectIntent(views: NormalizedViews): Detection[] {
       confidence: CONFIDENCE[match.tag] ?? 0.7,
       evidence: match.term,
     });
+  }
+
+  // Proximity rule, added only when the lexicon did not already call this
+  // off-platform — so "dm me on whatsapp" is not double-counted.
+  if (!detections.some((d) => d.type === "intent.offplatform")) {
+    const move = detectChannelMove(text);
+    if (move !== null) {
+      const inNegative = suppressed.some((n) => n.start <= move.span.start && n.end >= move.span.end);
+      if (!inNegative) detections.push(move);
+    }
   }
 
   return detections;

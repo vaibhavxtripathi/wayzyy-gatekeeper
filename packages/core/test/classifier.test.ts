@@ -118,3 +118,55 @@ describe("tier 4 in the cascade", () => {
     }
   });
 });
+
+describe("tier 4 brings independent evidence, not tier 3's verdict", () => {
+  function featuresFor(text: string, riskScore: number) {
+    const views = normalize(text);
+    const { detections } = runDetectors(views);
+    return {
+      detections,
+      signals: views.signals,
+      digitRuns: views.digitRuns,
+      text: views.folded,
+      weirdTokenCount: 0,
+      riskScore,
+      digitPressure: 0,
+      role: "guest" as const,
+      stage: "pre_booking" as const,
+    };
+  }
+
+  /**
+   * riskScore was a dense feature. Because Tier 4 only ever sees messages
+   * Tier 3 escalated, that feature was bounded below by bands.low on every
+   * row the trainer saw, so it learned a large positive weight on it and the
+   * sigmoid saturated: p=1.0000 on "thanks, see you on the 14th". The tier
+   * meant to second-guess Tier 3 was just restating it, and its 100%
+   * accuracy was the tautology "escalated ⇒ violation".
+   */
+  it("does not expose tier 3's score as a feature", () => {
+    expect(DENSE_FEATURES).not.toContain("riskScore");
+  });
+
+  it("returns the same probability whatever tier 3 scored", () => {
+    const text = "is there a landline in the room?";
+    const probabilities = [3.1, 5.0, 7.9, 50].map(
+      (risk) => classify(featuresFor(text, risk), CLASSIFIER).probability,
+    );
+    for (const p of probabilities) {
+      expect(p).toBeCloseTo(probabilities[0]!, 10);
+    }
+  });
+
+  it("allows ordinary messages instead of blocking by reflex", () => {
+    // Each of these scored p=1.0000 and blocked before the leakage was removed.
+    for (const text of [
+      "thanks, see you on the 14th",
+      "what is the check in time?",
+      "is there a landline in the room?",
+    ]) {
+      const result = classify(featuresFor(text, 5), CLASSIFIER);
+      expect(result.decision, `${text} -> p=${result.probability}`).toBe("allow");
+    }
+  });
+});

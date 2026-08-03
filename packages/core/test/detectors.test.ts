@@ -312,3 +312,118 @@ describe("SMS-style contact requests", () => {
     expect(hasType("send ur number", "intent.")).toBe(true);
   });
 });
+
+describe("proposing to continue on another channel", () => {
+  const types = (text: string) => runDetectors(normalize(text)).detections.map((d) => d.type);
+
+  /**
+   * The action lexicon covered fixed phrases ("dm me on whatsapp") but not
+   * how a host actually phrases it. "it'll be easier if we just chat on
+   * WhatsApp instead" scored 2.0 — inside the allow band — and was delivered,
+   * which is the disintermediation the product exists to stop arriving in the
+   * most natural possible wording.
+   */
+  it("catches a channel move however it is phrased", () => {
+    for (const text of [
+      "2pm works. btw it'll be easier if we just chat on whatsapp instead",
+      "let's chat on whatsapp instead",
+      "easier to talk on telegram",
+      "we can just text on whatsapp",
+      "lets move this to whatsapp",
+      "shall we continue on signal app",
+    ]) {
+      expect(types(text), text).toContain("intent.offplatform");
+    }
+  });
+
+  it("does not fire on reporting, past tense, or incidental mentions", () => {
+    // Reporting an approach is not making one — the message a platform most
+    // wants delivered.
+    for (const text of [
+      "someone messaged me on whatsapp claiming to be you",
+      "i got a text from someone on whatsapp",
+      "is there wifi so i can whatsapp my family?",
+      "please keep all chat here in the app",
+    ]) {
+      expect(types(text), text).not.toContain("intent.offplatform");
+    }
+  });
+
+  it("does not double-count a phrase the lexicon already covers", () => {
+    const offPlatform = types("dm me on whatsapp").filter((t) => t === "intent.offplatform");
+    expect(offPlatform.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("profanity is hostility, and register is not", () => {
+  const types = (text: string) => runDetectors(normalize(text)).detections.map((d) => d.type);
+  const flags = (text: string) =>
+    types(text).some((t) => t === "safety.hostility.sev2" || t === "safety.hostility.sev3");
+
+  /**
+   * The most common English profanity was absent from the lexicon entirely —
+   * not suppressed, never listed. "fuck off" was delivered with "Nothing
+   * concerning found." while the far milder "you people are useless" blocked.
+   * The corpus omitted the word too, so the reported 100% hostility recall
+   * never tested for it.
+   */
+  it("catches direct profanity and its inflections", () => {
+    for (const text of [
+      "fuck off",
+      "fuck you",
+      "go fuck yourself",
+      "shut the fuck up",
+      "you're a fucking idiot",
+      "stfu",
+      "what a piece of shit",
+      "gaandu",
+      "teri maa ki",
+    ]) {
+      expect(flags(text), text).toBe(true);
+    }
+  });
+
+  it("catches self-censored spellings", () => {
+    // People mask these themselves and the intent is identical — the whole
+    // point of the spelling is that the reader still reads the word.
+    for (const text of ["f*ck off", "f**k you", "fu*k off", "b*tch", "c*nt"]) {
+      expect(flags(text), text).toBe(true);
+    }
+  });
+
+  it("does not block coarse register aimed at a thing", () => {
+    // Ordinary guest complaints. A platform that blocks these has mistaken
+    // tone for hostility — the same error as delivering "fuck off".
+    for (const text of [
+      "the wifi is a bit crap honestly",
+      "we had a shitty flight but arrived fine",
+      "damn, that's a great view",
+      "wtf is the check in time lol",
+      "traffic sucks at that hour",
+      "the shower pressure sucks a bit",
+    ]) {
+      expect(flags(text), text).toBe(false);
+    }
+  });
+
+  it("promotes coarse words when aimed at a person", () => {
+    // "shitty flight" is a complaint; "your shitty attitude" is abuse, and
+    // the only difference is what the word attaches to.
+    for (const text of ["you are shit", "your shitty attitude", "u r crap"]) {
+      expect(flags(text), text).toBe(true);
+    }
+  });
+
+  it("does not fire on ordinary text containing symbols or short words", () => {
+    for (const text of [
+      "2*4 sockets in the room",
+      "the a/c unit",
+      "suit yourself",
+      "f. block, near the park",
+      "shirt and shorts ok?",
+      "short stay",
+    ]) {
+      expect(types(text).some((t) => t.startsWith("safety.hostility")), text).toBe(false);
+    }
+  });
+});

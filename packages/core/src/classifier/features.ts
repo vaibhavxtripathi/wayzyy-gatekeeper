@@ -15,7 +15,23 @@ import type { BookingStage, SenderRole } from "../types.js";
 /** 2^14 dimensions for the hashed n-gram bag (SPEC §7). */
 export const HASH_DIMS = 1 << 14;
 
-/** Named dense features, extracted from Tier 1-3 output. */
+/**
+ * Named dense features, extracted from Tier 1-3 output.
+ *
+ * `riskScore` is deliberately ABSENT. Including it was target leakage: Tier 4
+ * only ever sees messages Tier 3 placed in the escalation band, so riskScore
+ * is bounded below by bands.low on every training row and every inference. The
+ * trainer duly learned a large positive weight on it (4.86, against a bias of
+ * +1.30), which alone drove the sigmoid to 1.0 for every input — the model
+ * scored p=1.0000 on "thanks, see you on the 14th" and blocked 250 of the 256
+ * band messages by reflex. Its reported 100% accuracy was the tautology
+ * "escalated ⇒ violation", not a learned distinction.
+ *
+ * Tier 4 exists to bring INDEPENDENT evidence to messages Tier 3 could not
+ * resolve. A feature that merely restates Tier 3's opinion cannot do that, and
+ * actively prevents it. `digitPressure` is retained: it is conversation
+ * context Tier 3 also uses, but it is not Tier 3's verdict.
+ */
 export const DENSE_FEATURES = [
   "validPhone",
   "partialPhone",
@@ -43,7 +59,6 @@ export const DENSE_FEATURES = [
   "totalDigits",
   "textLength",
   "digitRatio",
-  "riskScore",
   "digitPressure",
   "isHost",
   "isPostBooking",
@@ -58,6 +73,10 @@ export interface FeatureInput {
   /** The folded view — what the n-gram bag is computed over. */
   text: string;
   weirdTokenCount: number;
+  /**
+   * Tier 3's score. Accepted for tracing and threshold work, but deliberately
+   * NOT used as a feature — see the note on DENSE_FEATURES.
+   */
   riskScore: number;
   digitPressure: number;
   role: SenderRole;
@@ -132,7 +151,6 @@ export function extractDense(input: FeatureInput): number[] {
     // Length is logged: raw character counts swamp binary features otherwise.
     textLength: Math.log1p(textLength),
     digitRatio: textLength > 0 ? totalDigits / textLength : 0,
-    riskScore: input.riskScore,
     digitPressure: input.digitPressure,
     isHost: input.role === "host" ? 1 : 0,
     isPostBooking: input.stage === "post_booking" ? 1 : 0,

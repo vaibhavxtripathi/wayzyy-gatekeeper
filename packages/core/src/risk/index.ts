@@ -39,6 +39,34 @@ const BENIGN_NEIGHBOURS =
 const NEIGHBOUR_WINDOW = 20;
 
 /**
+ * A run fused to letters is part of an alphanumeric IDENTIFIER, not a bare
+ * fragment of a number: `G81104` / `IX1982` (flight), `A66617` (PNR),
+ * `BK-88231` (booking ref), `256GB`, `AI2634`.
+ *
+ * BENIGN_NEIGHBOURS alone cannot see these. It scans the ~20 characters around
+ * a run for an explaining word, but in "we are on G81104 arriving tomorrow"
+ * the only clue is the `G` glued to the digits — there is no "flight" nearby
+ * to find. Two such messages in one conversation had their runs buffered as
+ * innocent fragments and merged into `8110489892`, a structurally valid IN
+ * mobile that nobody sent, which then blocked the conversation.
+ *
+ * A genuine split number arrives as bare digits ("98765" … "43210"); digits
+ * welded to a letter code are the one thing it never looks like.
+ */
+function isAlphanumericIdentifier(
+  run: { sourceSpan: { start: number; end: number } },
+  text: string,
+): boolean {
+  // The span covers the whole source token, which for `G81104` includes the
+  // leading letter — so check the span itself as well as the characters
+  // immediately flanking it.
+  const within = text.slice(run.sourceSpan.start, run.sourceSpan.end);
+  const charBefore = text.slice(Math.max(0, run.sourceSpan.start - 1), run.sourceSpan.start);
+  const charAfter = text.slice(run.sourceSpan.end, run.sourceSpan.end + 1);
+  return /[a-z]/i.test(within) || /[a-z]/i.test(charBefore) || /[a-z]/i.test(charAfter);
+}
+
+/**
  * True when a run could plausibly be part of a number split across messages.
  *
  * A genuine split ("98765" … "43210") arrives as bare digits with nothing
@@ -54,6 +82,10 @@ function isPlausibleFragment(
   if (run.digits.length < 3) return false;
 
   const text = views.denoised;
+
+  // Digits welded to a letter code are an identifier, not a fragment.
+  if (isAlphanumericIdentifier(run, text)) return false;
+
   const before = text.slice(Math.max(0, run.sourceSpan.start - NEIGHBOUR_WINDOW), run.sourceSpan.start);
   const after = text.slice(run.sourceSpan.end, run.sourceSpan.end + NEIGHBOUR_WINDOW);
 
@@ -143,9 +175,60 @@ export class RiskEngine {
         }
       }
 
+      // Joining messages creates ADJACENCY THAT NOBODY WROTE, and detectors
+      // keying on proximity will happily fire on it. "wifi password is
+      // villa98765" followed by "someone messaged me on whatsapp claiming to
+      // be you" concatenates to put `whatsapp` next to `98765`, which the
+      // handle detector reads as a messaging handle carrying a digit run —
+      // a contact identifier assembled from two innocent messages, one of
+      // which is a scam REPORT the platform most wants delivered.
+      //
+      // Type-level dedup cannot catch this: the fabricated type appears in no
+      // single message, so it looks exactly like a genuine cross-boundary
+      // find. The distinguishing property is that a real split number
+      // RECOVERS AN IDENTIFIER the fragments could not produce alone — a
+      // phone or a UPI id, whose digits come from more than one message.
+      // Proximity-only detections (handles, channel names, addresses, plain
+      // URLs) carry no such proof and are dropped.
+      const RECOVERABLE = /^(?:contact\.phone|payment\.upi|contact\.email)/;
+
+      // The current message must CONTRIBUTE to the cross-message find, or it
+      // is not evidence about this message at all.
+      //
+      // The re-scan joins this sender's recent turns and re-detects over the
+      // whole window, so once "98765" … "43210" is in history, `contact.phone`
+      // is recoverable from that history on EVERY later message — and was
+      // charged at the full 9.0 validPhone weight to messages containing no
+      // digits whatsoever. "sorry, long day. let's just confirm the booking,
+      // I've paid" blocked at 11.3 with an empty category list, which is the
+      // engine asserting a phone number is present in a message that has none.
+      //
+      // Type-level dedup could not catch this either: the fragments produce
+      // only `contact.phone.partial` individually, so the recovered
+      // `contact.phone` is genuinely absent from every single message and
+      // looks like a legitimate cross-boundary find on each new turn.
+      //
+      // Merely CONTAINING digits is not contributing: "will do! iPhone 15 Pro
+      // 256GB" has two runs, neither of which is part of the number recovered
+      // from earlier turns, and it blocked at 12.2 for a phone it does not
+      // contain. The current message's digits must appear IN the recovered
+      // identifier for it to be evidence about this message.
+      const recoveredDigits = rescanResult.detections
+        .filter((d) => RECOVERABLE.test(d.type))
+        .map((d) => d.evidence.replace(/\D/g, ""))
+        .filter((d) => d.length > 0);
+
+      const currentContributes = views.digitRuns.some((run) =>
+        recoveredDigits.some(
+          (recovered) => run.digits.length > 0 && recovered.includes(run.digits),
+        ),
+      );
+
       for (const detection of rescanResult.detections) {
+        if (!currentContributes) break;
         if (seen.has(detection.type)) continue;
-        if (!detection.type.startsWith("contact.")) continue;
+        if (!detection.type.startsWith("contact.") && !detection.type.startsWith("payment.")) continue;
+        if (!RECOVERABLE.test(detection.type)) continue;
         rescanDetections.push({
           ...detection,
           evidence: `${detection.evidence} (windowed re-scan across messages)`,
@@ -224,6 +307,12 @@ export class RiskEngine {
       breakdown.score = Math.max(breakdown.score, this.config.bands.high + 1);
     }
 
+    // Drop the fragments this merge consumed (see fragmentBuffer below).
+    const retainedFragments =
+      validMerge !== null
+        ? allFragments.filter((f) => !validMerge.contributors.includes(f))
+        : allFragments;
+
     // --- persist updated state ----------------------------------------------
     // Only count intent hits belonging to the CURRENT message's sender.
     // rescanDetections are found across THIS sender's recent turns, so they
@@ -241,8 +330,18 @@ export class RiskEngine {
     const nextState: PairState = {
       digitPressure: decayedPressure + pressureDelta,
       digitPressureUpdatedAt: nowMs,
+      // Fragments that produced a merge are CONSUMED, not carried forward.
+      //
+      // A recovered number is acted on once, on the turn that completes it.
+      // Leaving its parts in the buffer means they re-merge against every
+      // later message and re-report the same number indefinitely: after
+      // "98765" … "43210" was caught, an innocent "thanks, see you on the
+      // 9th!" four turns later was still blocked with "combined with an
+      // earlier message, this forms the number 9876543210" — a message with
+      // no digits in it at all, held responsible for evidence that was
+      // already handled.
       fragmentBuffer: pruneFragments(
-        allFragments,
+        retainedFragments,
         nowMs,
         session.fragmentWindowMs,
         session.fragmentBufferSize,

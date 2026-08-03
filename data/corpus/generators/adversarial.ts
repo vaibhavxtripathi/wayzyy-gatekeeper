@@ -97,6 +97,25 @@ const HOSTILITY_PHRASES = [
   "you stupid clown this listing is a scam",
   "kutte kamine paise wapas kar",
   "i will kill you if you dont refund",
+  // The most common English profanity was absent from this list entirely, so
+  // the benchmark reported 100% hostility recall while "fuck off" was
+  // delivered with "Nothing concerning found." A corpus that omits a word
+  // cannot measure whether the engine catches it.
+  "fuck off",
+  "fuck you and your fucking listing",
+  "go fuck yourself",
+  "shut the fuck up and refund me",
+  "stfu you useless host",
+  "what a piece of shit property",
+  "you are shit and so is this place",
+  "your shitty attitude is why im reporting you",
+  // Self-censored spellings: same intent, and the whole point of the
+  // spelling is that the reader still reads the word.
+  "f*ck off",
+  "f**k you",
+  "you b*tch, refund now",
+  "gaandu host, paise wapas",
+  "teri maa ki, cancel kar de",
 ];
 
 const SCAM_LINKS = [

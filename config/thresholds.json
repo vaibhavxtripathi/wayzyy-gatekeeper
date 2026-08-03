@@ -20,6 +20,7 @@
   },
   "safetyWeights": {
     "$comment": "Safety is scored separately from contact: it must not be relaxed post-booking.",
+    "hostilitySev0": 0.6,
     "hostilitySev1": 3.5,
     "hostilitySev2": 4.0,
     "hostilitySev3": 9.0,

@@ -168,12 +168,52 @@ export const HOSTILITY_SEV1 = [
   "pagal", "paagal", "nalayak", "chup kar", "chup ho ja",
 ];
 
+/**
+ * Coarse register, not abuse.
+ *
+ * These describe a THING far more often than they attack a person: "the wifi
+ * is a bit crap", "we had a shitty flight", "wtf is the check in time lol".
+ * They are ordinary guest complaints, and a platform that blocks them has
+ * mistaken tone for hostility — the same error, in the opposite direction, as
+ * delivering "fuck off" with "Nothing concerning found."
+ *
+ * Scored well below the allow band so they never action on their own, but
+ * still counted, so they corroborate when they appear alongside real
+ * hostility ("this shitty place and your useless staff").
+ *
+ * A word here is promoted to sev2 when it is aimed at a PERSON — see
+ * DIRECTED_AT_PERSON in safety.ts. "shitty flight" stays quiet; "you shitty
+ * little man" does not.
+ */
+export const HOSTILITY_MILD = [
+  "crap", "crappy", "shit", "shitty", "damn", "goddamn", "wtf", "wth",
+  "sucks", "sucked", "bloody hell", "hell no", "bloody",
+];
+
 export const HOSTILITY_SEV2 = [
   "bastard", "asshole", "arsehole", "dickhead", "scumbag", "moron",
   "retard", "shithead", "prick", "wanker", "cunt", "bitch", "whore",
   "kutta", "kutte", "kamina", "kamine", "harami", "haramkhor",
   "gandu", "chutiya", "chutiye", "bhosdi", "bhosdike", "madarchod",
   "behenchod", "bhenchod", "bkl", "saala", "saale", "randi",
+  // The most common English profanity and its inflections were absent
+  // entirely — not suppressed, simply never listed. "fuck off" and "fuck you"
+  // were delivered with "Nothing concerning found." while the far milder
+  // "you people are useless" blocked, which is the exact inversion manual
+  // testing surfaced. The corpus omitted the word too, so the reported 100%
+  // hostility recall never tested for it.
+  //
+  // Matching is whole-word (see aho.ts), so "Scunthorpe"-class substrings do
+  // not false-positive. Spaced and punctuated evasions ("f u c k", "f*ck")
+  // are handled by the denoise/deleet views, not by listing every variant.
+  "fuck", "fucking", "fucker", "fuckers", "fucked", "fuckoff", "fuk", "fuck u",
+  "fck", "fuq", "phuck", "stfu", "gtfo",
+  "bullshit", "shithead", "piece of shit", "pos scam", "shit show",
+  "dick", "cock", "twat", "slut", "douche", "douchebag", "jackass", "dumbass",
+  "piss off", "screw you", "screw off", "sod off", "bugger off",
+  "lanjha", "lawda", "lauda", "lund", "chodu", "gaandu", "gaand",
+  "bhosadi", "bhosadike", "maderchod", "madarjaat", "teri maa", "teri ma",
+  "maa ki", "behen ki", "mkc",
 ];
 
 export const HOSTILITY_SEV3 = [

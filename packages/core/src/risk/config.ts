@@ -29,6 +29,8 @@ export interface RiskWeights {
 }
 
 export interface SafetyWeights {
+  /** Coarse register aimed at a thing, not a person. Never actions alone. */
+  hostilitySev0?: number;
   hostilitySev1: number;
   hostilitySev2: number;
   hostilitySev3: number;
@@ -86,6 +88,7 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
     confusablesFolded: 0.4,
   },
   safetyWeights: {
+    hostilitySev0: 0.6,
     hostilitySev1: 3.5,
     hostilitySev2: 4.0,
     hostilitySev3: 9.0,

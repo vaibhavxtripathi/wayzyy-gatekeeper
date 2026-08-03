@@ -188,6 +188,42 @@ async function main(): Promise<void> {
     rows.push({ id: entry.id, group: entry.kind, expectedActioned: false, result });
   }
 
+  // --- negatives, replayed AS CONVERSATIONS ---------------------------------
+  // Every negative above is scored through `moderate()` in a conversation of
+  // its own, so relationship state is always empty. That measures the engine
+  // on a message in isolation — which is not how it is used, and is blind by
+  // construction to anything that accumulates across turns.
+  //
+  // It reported 0.00% friction while ordinary multi-turn conversations were
+  // being blocked wholesale by runaway digit pressure: the bug lived entirely
+  // in the state the harness never built up. These rows replay the same
+  // hard negatives through the stateful path, in batches sharing one
+  // conversation, so carryover is exercised the way production exercises it.
+  const CONVERSATION_LENGTH = 12;
+  const conversationalStore = new MemorySessionStore();
+  for (let i = 0; i < negatives.length; i++) {
+    const entry = negatives[i]!;
+    const conversationId = `conv_${Math.floor(i / CONVERSATION_LENGTH)}`;
+    const started = performance.now();
+    const result = await moderateStateful(
+      {
+        message_id: `conv_${entry.id}`,
+        conversation_id: conversationId,
+        sender_role: entry.sender ?? "guest",
+        booking_stage: entry.stage ?? "pre_booking",
+        text: entry.text,
+      },
+      { ...options, store: conversationalStore, nowMs: Date.now() + i * 1000 },
+    );
+    latencies.push(performance.now() - started);
+    rows.push({
+      id: `conv_${entry.id}`,
+      group: `conv:${entry.kind}`,
+      expectedActioned: false,
+      result,
+    });
+  }
+
   // --- confusion matrix ----------------------------------------------------
   let tp = 0;
   let fp = 0;

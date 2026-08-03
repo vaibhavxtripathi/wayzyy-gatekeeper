@@ -216,9 +216,26 @@ function main(): void {
   // Train on the escalation band — the traffic this tier actually sees — plus
   // a sample of resolved traffic so the model stays calibrated at the extremes
   // and does not drift into predicting "uncertain" for everything.
+  //
+  // The context sample is drawn PER LABEL, in equal parts. Drawing it blind to
+  // the label (as this once did) inherited the corpus's own skew: the band
+  // held 250 positives against 6 negatives, so the model reached 100% accuracy
+  // by answering "block" unconditionally and never learned what an allowable
+  // borderline message looks like. Class weights alone could not fix that —
+  // with six examples there is nothing to weight. The fix is to supply enough
+  // negatives that "allow" is a learnable outcome at all.
   const resolved = shuffle(samples.filter((s) => !s.escalated), 7);
-  const context = resolved.slice(0, Math.min(resolved.length, escalatedSamples.length * 3));
+  const perLabel = Math.max(escalatedSamples.length, 200);
+  const context = [
+    ...resolved.filter((s) => s.label === 0).slice(0, perLabel * 2),
+    ...resolved.filter((s) => s.label === 1).slice(0, perLabel),
+  ];
   const trainingPool = shuffle([...escalatedSamples, ...context], 99);
+
+  const poolPos = trainingPool.filter((s) => s.label === 1).length;
+  console.log(
+    `  training pool: ${trainingPool.length} (${poolPos} positive, ${trainingPool.length - poolPos} negative)`,
+  );
 
   if (trainingPool.length === 0) {
     console.error("no training samples — is the corpus built?");

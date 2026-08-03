@@ -654,3 +654,277 @@ describe("unrelated digits never assemble into a phantom number", () => {
     expect(verdicts.slice(1).every((v) => v === "allow")).toBe(true);
   });
 });
+
+describe("relationship carryover corroborates but never convicts", () => {
+  /**
+   * The defect these cover: digitPressure was added to the score linearly and
+   * without bound. Ordinary booking chat carries ~5 digits a message (dates,
+   * prices, guest counts, PIN codes), so after ten innocent turns the
+   * carryover alone reached 11.9 against a block band of 8.0 — every later
+   * message in the conversation was convicted by arithmetic, whatever it said.
+   *
+   * A clamp hid this for messages with zero detections. Anything carrying one
+   * weak, innocent detection fell straight through, which is what manual
+   * testing kept hitting.
+   */
+  const chatter = [
+    "hi! is the place available for 3 nights from the 14th?",
+    "we're 4 adults and 2 kids, arriving around 9:30 pm",
+    "what's the total for 3 nights? is it 12000 or 15000?",
+    "great, booking ref is BK-88231 if you need it",
+    "the flight lands at 8:45, flight AI 2634",
+    "my pin code here is 403507 for the delivery",
+    "we'll pay the 5000 deposit today",
+    "one more thing, is early checkin at 11 am possible?",
+  ];
+
+  async function buildPressure(stage: BookingStage = "pre_booking"): Promise<MemorySessionStore> {
+    const store = new MemorySessionStore();
+    for (const [i, text] of chatter.entries()) {
+      await moderateStateful(req(text, { message_id: `p${i}`, booking_stage: stage }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+    }
+    return store;
+  }
+
+  it("never blocks ordinary digit-heavy chat, however long it runs", async () => {
+    const store = new MemorySessionStore();
+    for (const [i, text] of chatter.entries()) {
+      const result = await moderateStateful(req(text, { message_id: `m${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+      expect(result.verdict, `"${text}" was actioned`).toBe("allow");
+    }
+  });
+
+  it("keeps the digit-pressure term bounded no matter how many digits accrue", async () => {
+    const store = await buildPressure();
+    const result = await moderateStateful(
+      req("and what time is checkout?", { message_id: "after" }),
+      { store, trigramModel: MODEL, nowMs: T0 + 60_000 },
+    );
+    const contributions = result.signals["contributions"] as Record<string, number>;
+    // Below the allow band on its own: pressure may corroborate, never decide.
+    expect(contributions["digitPressure"] ?? 0).toBeLessThan(DEFAULT_RISK_CONFIG.bands.low);
+  });
+
+  it("still delivers a scam report after a long digit-heavy conversation", async () => {
+    // The exact case from manual testing: this message is the one a platform
+    // most wants delivered, and it blocked at 20.6 purely on carryover.
+    const store = await buildPressure();
+    const result = await moderateStateful(
+      req("someone messaged me on whatsapp claiming to be you", {
+        message_id: "report",
+        sender_role: "host",
+      }),
+      { store, trigramModel: MODEL, nowMs: T0 + 60_000 },
+    );
+    expect(result.verdict).toBe("allow");
+  });
+
+  it("still delivers a post-booking gate code after digit build-up", async () => {
+    const store = await buildPressure("post_booking");
+    const result = await moderateStateful(
+      req("gate code 4471, villa 9, lane 8", {
+        message_id: "gate",
+        sender_role: "host",
+        booking_stage: "post_booking",
+      }),
+      { store, trigramModel: MODEL, nowMs: T0 + 60_000 },
+    );
+    expect(result.verdict).toBe("allow");
+  });
+
+  it("still blocks a real number once pressure has accumulated", async () => {
+    // The guard must not become a blanket amnesty: own evidence still decides.
+    const store = await buildPressure();
+    const result = await moderateStateful(
+      req("call me on 9876543210", { message_id: "leak" }),
+      { store, trigramModel: MODEL, nowMs: T0 + 60_000 },
+    );
+    expect(result.verdict).toBe("block");
+  });
+});
+
+describe("alphanumeric identifiers are never buffered as fragments", () => {
+  /**
+   * Flight codes, PNRs and booking refs fuse a letter code to their digits
+   * (`G81104`, `IX1982`, `A66617`). BENIGN_NEIGHBOURS cannot see that: it
+   * scans for an explaining WORD near the run, and in "we are on G81104
+   * arriving tomorrow" the only clue is the `G` welded to the digits.
+   *
+   * Two such messages in one conversation were buffered as innocent
+   * fragments and merged into 8110489892 — a structurally valid IN mobile
+   * nobody sent — which then blocked the conversation.
+   */
+  it("does not assemble a phantom number from flight codes", async () => {
+    const store = new MemorySessionStore();
+    const conversation = [
+      "we are on IX1982 arriving tomorrow",
+      "PNR is X29132",
+      "we are on G81104 arriving tomorrow",
+      "we are on G89892 arriving tomorrow",
+    ];
+
+    for (const [i, text] of conversation.entries()) {
+      const result = await moderateStateful(req(text, { message_id: `f${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+      expect(result.signals["merged_fragments"], `${text} fabricated a number`).toBeUndefined();
+      expect(result.verdict, `${text} was actioned`).toBe("allow");
+    }
+  });
+
+  it("still merges a genuinely split bare number", async () => {
+    // The guard must not buy its silence by disabling split detection.
+    const store = new MemorySessionStore();
+    const first = await moderateStateful(req("98765", { message_id: "s0" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+    expect(first.verdict).toBe("allow");
+
+    const second = await moderateStateful(req("43210", { message_id: "s1" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0 + 1000,
+    });
+    expect(second.verdict).toBe("block");
+    expect(second.signals["merged_fragments"]).toBe("9876543210");
+  });
+});
+
+describe("the windowed re-scan never fabricates evidence from adjacency", () => {
+  /**
+   * Joining messages creates adjacency nobody wrote. "wifi password is
+   * villa98765" followed by "someone messaged me on whatsapp claiming to be
+   * you" concatenates to put `whatsapp` beside `98765`, which the handle
+   * detector read as a messaging handle carrying a digit run — a contact
+   * identifier assembled from two innocent messages, one of them a scam
+   * report. Type-level dedup could not catch it: the fabricated type appears
+   * in no single message, so it looked like a genuine cross-boundary find.
+   */
+  it("does not invent a handle by joining a wifi password to a scam report", async () => {
+    const store = new MemorySessionStore();
+    const conversation = [
+      "gate code 4471, villa 9, lane 8",
+      "wifi password is villa98765",
+      "someone messaged me on whatsapp claiming to be you",
+    ];
+
+    let last: Awaited<ReturnType<typeof moderateStateful>> | undefined;
+    for (const [i, text] of conversation.entries()) {
+      last = await moderateStateful(
+        req(text, { message_id: `w${i}`, sender_role: "host", booking_stage: "post_booking" }),
+        { store, trigramModel: MODEL, nowMs: T0 + i * 1000 },
+      );
+      expect(last.verdict, `"${text}" was actioned`).toBe("allow");
+    }
+
+    expect(last?.signals["cross_message_categories"]).toBeUndefined();
+  });
+
+  it("still recovers a number genuinely split across turns", async () => {
+    // The guard must not buy its silence by disabling the re-scan.
+    const store = new MemorySessionStore();
+    await moderateStateful(req("my number is 98765", { message_id: "r0" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+    const second = await moderateStateful(req("43210 ok", { message_id: "r1" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0 + 1000,
+    });
+    expect(second.verdict).toBe("block");
+  });
+});
+
+describe("a recovered number is acted on once, not forever", () => {
+  /**
+   * Fragments that produced a merge stayed in the buffer and re-merged
+   * against every later message, re-reporting the same number indefinitely.
+   * Four turns after "98765" … "43210" was caught, an innocent "thanks, see
+   * you on the 9th!" was still blocked with "combined with an earlier
+   * message, this forms the number 9876543210" — a message containing no
+   * digits at all, held responsible for evidence already handled.
+   */
+  it("does not re-report a merged number on later messages", async () => {
+    const store = new MemorySessionStore();
+    const send = async (text: string, i: number) =>
+      moderateStateful(req(text, { message_id: `c${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+
+    await send("my number is 98765", 0);
+    const completing = await send("43210", 1);
+    expect(completing.verdict).toBe("block");
+    expect(completing.signals["merged_fragments"]).toBe("9876543210");
+
+    // Everything after must stand on its own evidence.
+    for (const [i, text] of [
+      "sorry, long day. let's just confirm the booking, I've paid",
+      "will do! iPhone 15 Pro 256GB, hope it survives the flight lol",
+      "thanks, see you on the 9th!",
+    ].entries()) {
+      const later = await send(text, i + 2);
+      expect(later.signals["merged_fragments"], `${text} re-reported a merge`).toBeUndefined();
+      expect(later.verdict, `${text} was actioned`).toBe("allow");
+    }
+  });
+
+  it("does not charge a re-scan phone to a message with no digits", async () => {
+    // The re-scan re-detected contact.phone from history on every later turn
+    // and charged the full 9.0 validPhone weight to messages containing no
+    // digits — asserting a phone number is present in a message that has none.
+    const store = new MemorySessionStore();
+    await moderateStateful(req("my number is 98765", { message_id: "d0" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0,
+    });
+    await moderateStateful(req("43210", { message_id: "d1" }), {
+      store,
+      trigramModel: MODEL,
+      nowMs: T0 + 1000,
+    });
+
+    const benign = await moderateStateful(
+      req("sorry, long day. let's just confirm the booking, I've paid", { message_id: "d2" }),
+      { store, trigramModel: MODEL, nowMs: T0 + 2000 },
+    );
+    expect(benign.verdict).toBe("allow");
+    expect(benign.signals["cross_message_categories"]).toBeUndefined();
+    const contributions = benign.signals["contributions"] as Record<string, number>;
+    expect(contributions["validPhone"]).toBeUndefined();
+  });
+
+  it("still catches a second, genuinely new split number", async () => {
+    // Consuming fragments must not blind the engine to the next attempt.
+    const store = new MemorySessionStore();
+    const send = async (text: string, i: number) =>
+      moderateStateful(req(text, { message_id: `e${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+
+    await send("98765", 0);
+    expect((await send("43210", 1)).verdict).toBe("block");
+
+    await send("91234", 2);
+    const second = await send("56789", 3);
+    expect(second.signals["merged_fragments"]).toBe("9123456789");
+  });
+});
