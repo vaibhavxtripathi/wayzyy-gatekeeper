@@ -2,7 +2,19 @@
 
 **Live demo:** https://wayzyy-gatekeeper.vercel.app — type a message, watch the tier ladder decide it.
 
-A cost-descending cascade that catches obfuscated contact info and safety issues in guest–host chat. **p95 1.98 ms, $0.00 per 100k messages, 0 false positives across 2,000 hard negatives.**
+---
+
+## TL;DR
+
+**A five-tier cost-descending cascade for guest–host chat.** Each tier is cheaper and more certain than the one after it; a message stops at the first tier that can decide it. 91% never reach a model, and 99.97% never reach an LLM.
+
+| | |
+|---|---|
+| **Precision / Recall** | 1.0000 / 0.9991 |
+| **Friction** (legit blocked) | **0.00%** across 2,000 hard negatives |
+| **p95 latency** | **~0.9 ms** (target ≤ 25 ms) |
+| **Cost / 100k messages** | **$0.00** — 0.03% reach the LLM |
+| **Tests** | 259, typecheck clean, 3,088 evaluations |
 
 Both benchmark strings from your brief block correctly:
 
@@ -10,6 +22,16 @@ Both benchmark strings from your brief block correctly:
 |---|---|
 | `hi i a92m a121ksh35ay call me on nine eight 7 six zero` | **block** |
 | `reach out at insta: akshay_98_76_five_four` | **block** |
+
+**Three things worth your time:**
+
+1. **The hard problem is friction, not detection.** Guest–host chat is full of digits that aren't phone numbers — prices, PINs, flight codes, guest counts. Catching `nine eight 7 six zero` is easy; catching it *without* blocking `₹98,765 for 5 nights` is the actual engineering. I optimised for precision because a blocked innocent message costs more than a leaked number. (§1, §4)
+
+2. **Safety is scored separately from contact risk**, so post-booking can relax contact rules without relaxing hostility or extortion. Reporting a scam is distinguished from committing one; asking about an address is distinguished from sharing one. (§3)
+
+3. **My benchmark said precision 1.0000 and 0.00% friction — and it was structurally wrong.** All 1,000 hard negatives ran through a code path where the bug I had *couldn't* occur. Manual testing caught it; the dashboard never would have. Eight defects were hiding behind that green. **If you read one section, read §5.**
+
+**Honest caveat:** the corpus is synthetic. Precision 1.0000 means the engine handles the evasions I thought to write down — a measure of my imagination as much as its coverage. (§6)
 
 ---
 
@@ -90,7 +112,7 @@ Two distinctions that took real work:
 
 ## 4. Trade-offs I made deliberately
 
-**Latency vs accuracy.** The cascade's whole shape is this trade. p95 is 1.98ms because 91% of traffic never reaches a model. I could add a transformer at Tier 4 for better generalization — the interface is designed for it — but it would cost ~20ms and the corpus does not currently justify it.
+**Latency vs accuracy.** The cascade's whole shape is this trade. p95 is under a millisecond because 91% of traffic never reaches a model. I could add a transformer at Tier 4 for better generalization — the interface is designed for it — but it would cost ~20ms and the corpus does not currently justify it.
 
 **Precision vs recall — I chose precision.** Friction is the more expensive failure. A blocked innocent message is a support ticket and a churned user; a leaked number is one lost commission. So partials never auto-block, questions are exempted, and carryover can corroborate but never convict.
 
@@ -137,7 +159,7 @@ Reproduced by `pnpm bench` on every run. 2,088 labelled messages, 3,088 evaluati
 | Precision | **1.0000** | ≥ 0.99 |
 | Recall | **0.9991** | ≥ 0.97 |
 | Friction (legit blocked) | **0.00%** | ≤ 0.50% |
-| p95 latency | **1.98 ms** | ≤ 25 ms |
+| p95 latency | **0.90 ms** | ≤ 25 ms |
 | Reaches Tier 5 | **0.03%** | ≤ 2% |
 | Cost / 100k | **$0.0000** | ≤ $0.15 |
 | Resolved ≤ Tier 3 | **91.00%** | ≥ 92% |
