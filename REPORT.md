@@ -11,7 +11,7 @@ and is left failing deliberately (§3).
 | Friction (legit blocked) | **0.00%** | ≤ 0.50% | PASS |
 | p95 latency | **0.85 ms** | ≤ 25 ms | PASS |
 | Reaches Tier 5 | **0.03%** | ≤ 2% | PASS |
-| Cost / 100k messages | **$0.0000** | ≤ $0.15 | PASS |
+| Cost / 100k messages | **$0.0007** | ≤ $0.15 | PASS |
 | Resolved at ≤ Tier 3 | **91.00%** | ≥ 92% | FAIL — see §3 |
 
 259 tests passing (250 core + 9 server). Three packages, typecheck clean.
@@ -290,8 +290,9 @@ apart and stopping at the tier that decided it.
 
 Manual testing showed messages blocked wholesale, almost nothing reaching the
 LLM, and the risk model flagging plainly innocent text. The benchmark reported
-precision 1.0000 and 0.00% friction. The benchmark was wrong. Eight distinct
-defects, each independently verified by reproduction before fixing.
+precision 1.0000 and 0.00% friction. The benchmark was wrong. Nine distinct
+root causes (§8.1-§8.9, one producing two separate fixes — ten rows in the
+table above), each independently verified by reproduction before fixing.
 
 ### 8.1 Digit pressure grew without bound — the primary cause
 

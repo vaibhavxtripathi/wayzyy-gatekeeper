@@ -21,9 +21,9 @@ before they read a word of the argument below.
 | | |
 |---|---|
 | **Precision / Recall** | 1.0000 / 0.9991 |
-| **Friction** (legit blocked) | **0.00%** across 2,000 hard negatives |
+| **Friction** (legit blocked) | **0.00%** — 1,000 hard negatives, each evaluated twice (stateless + as a conversation) = 2,000 evaluations, 0 false positives |
 | **p95 latency** | **~0.9 ms** (target ≤ 25 ms) |
-| **Cost / 100k messages** | **$0.00** — 0.03% reach the LLM |
+| **Cost / 100k messages** | **$0.0007** — 1 message in 3,088 reaches the LLM. ~2,970× cheaper than an LLM on every message ($2.08/100k) |
 | **Tests** | 259, typecheck clean, 3,088 evaluations |
 
 Both benchmark strings from your brief block correctly:
@@ -39,7 +39,7 @@ Both benchmark strings from your brief block correctly:
 
 2. **Safety is scored separately from contact risk**, so post-booking can relax contact rules without relaxing hostility or extortion. Reporting a scam is distinguished from committing one; asking about an address is distinguished from sharing one. (§3)
 
-3. **My benchmark said precision 1.0000 and 0.00% friction — and it was structurally wrong.** All 1,000 hard negatives ran through a code path where the bug I had *couldn't* occur. Manual testing caught it; the dashboard never would have. Eight defects were hiding behind that green. **If you read one section, read §5.**
+3. **My benchmark said precision 1.0000 and 0.00% friction — and it was structurally wrong.** All 1,000 hard negatives ran through a code path where the bug I had *couldn't* occur. Manual testing caught it; the dashboard never would have. Nine root causes were hiding behind that green. **If you read one section, read §5.**
 
 **Honest caveat:** the corpus is synthetic. Precision 1.0000 means the engine handles the evasions I thought to write down — a measure of my imagination as much as its coverage. (§6)
 
@@ -192,7 +192,7 @@ two images.
 
 The dashboard was wrong. Not slightly — **structurally**. All 1,000 hard negatives were scored through the stateless code path, which hardcodes `digitPressure: 0`. The friction metric was measuring a path on which the bug *could not occur*. It was not a wrong number; it was a number answering a different question than the one it appeared to answer.
 
-Eight defects were hiding behind it. The three worth naming:
+Nine root causes were hiding behind it — full writeup in `REPORT.md` §8. The three worth naming here:
 
 **Unbounded relationship state.** `digitPressure` counted raw digits and was added linearly with no ceiling. Ten turns of ordinary booking chat — dates, prices, guest counts — reached 11.9 against a block band of 8.0. Every subsequent message was convicted by arithmetic, whatever it said. *Fix: the term saturates below the allow band, so carryover can corroborate but never decide.*
 
@@ -210,7 +210,7 @@ The transferable lesson, and the reason this section exists: **a metric that can
 
 ## 6. Results
 
-Reproduced by `pnpm bench` on every run. 2,088 labelled messages, 3,088 evaluations.
+Reproduced by `pnpm bench` on every run. 2,088 labelled messages — 1,088 adversarial, 1,000 hard negatives. The 1,000 negatives are each run twice, once stateless and once replayed as a conversation (§5), so the total is 3,088 evaluations.
 
 | Metric | Measured | Target |
 |---|---|---|
@@ -219,7 +219,7 @@ Reproduced by `pnpm bench` on every run. 2,088 labelled messages, 3,088 evaluati
 | Friction (legit blocked) | **0.00%** | ≤ 0.50% |
 | p95 latency | **0.90 ms** | ≤ 25 ms |
 | Reaches Tier 5 | **0.03%** | ≤ 2% |
-| Cost / 100k | **$0.0000** | ≤ $0.15 |
+| Cost / 100k | **$0.0007** | ≤ $0.15 |
 | Resolved ≤ Tier 3 | **91.00%** | ≥ 92% |
 
 `confusion: tp 1087 · fp 0 · tn 2000 · fn 1`
@@ -260,7 +260,7 @@ That is also why the cascade is built to be tuned rather than retrained: weights
 - **Rate limiting** per sender per conversation, anti threshold-probing.
 - **Async mode** — deliver-then-redact for zero user-facing latency.
 
-**Scaling:** stateless per message except the session store, so it scales horizontally. At 100k messages/day the projected LLM spend is **$0.00** — 0.03% of traffic × $0.0000208.
+**Scaling:** stateless per message except the session store, so it scales horizontally. At 100k messages/day the projected LLM spend is **$0.0007** — 0.03% of traffic (1 in 3,088 messages) × $0.0000208/call. Cache hits reduce this further in production.
 
 ---
 
@@ -272,7 +272,7 @@ That is also why the cascade is built to be tuned rather than retrained: weights
 | **Repo** | `github.com/vaibhavxtripathi/wayzyy-gatekeeper` *(private — happy to add reviewers)* |
 | **Video walkthrough** | *(add before submitting)* |
 
-`README.md` covers setup; `REPORT.md` is the full engineering log including all 25 defects found and fixed.
+`README.md` covers setup; `REPORT.md` is the full engineering log — 25 defects found and fixed across the whole build, of which the 9 in §5/§8 here are the ones the benchmark itself failed to catch.
 
 ---
 
