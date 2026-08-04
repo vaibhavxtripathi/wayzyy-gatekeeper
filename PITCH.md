@@ -2,6 +2,16 @@
 
 **Live demo:** https://wayzyy-gatekeeper.vercel.app — type a message, watch the tier ladder decide it.
 
+<!--
+📸 SCREENSHOT #1 — Hero shot
+What: the playground with a message typed in, showing the tier ladder and
+the final verdict badge (allow/mask/block) in one frame.
+Suggested message: their own benchmark string —
+  "hi i a92m a121ksh35ay call me on nine eight 7 six zero"
+Why here: first thing a reviewer sees. Proves the demo is real and working
+before they read a word of the argument below.
+-->
+
 ---
 
 ## TL;DR
@@ -83,6 +93,19 @@ The key idea. One message becomes several views, and detectors run on whichever 
 
 Word-numbers are resolved in **English, Hinglish and Devanagari** (`nine`, `nau`, `नौ`). Spans are tracked back to the raw string so masking redacts the right characters.
 
+<!--
+📸 SCREENSHOT #2 — Tier ladder trace
+What: the playground's expanded trace view showing which tier resolved a
+message, with the "show technical details" panel open so the contribution
+breakdown (weights per signal) is visible.
+Suggested messages (2-3 side by side or stacked):
+  - an obvious leak resolved at Tier 1/3, e.g. "call me on 9876543210"
+  - a borderline one that reaches Tier 4, e.g. "is there a landline in the
+    room i can use?" resolving to ALLOW
+Why here: makes "cost-descending cascade" concrete instead of a diagram —
+shows the actual per-signal scoring, not just a verdict.
+-->
+
 ### Tier 3 — relationship state
 
 Per-conversation, not per-message. A number split across turns (`98765` … `43210`) is invisible to any single-message detector. Tier 3 buffers digit fragments and merges them inside a 30-minute window.
@@ -108,6 +131,17 @@ Two distinctions that took real work:
 - **Reporting a scam is not committing one.** *"someone messaged me on WhatsApp claiming to be you"* is the message a platform most wants delivered. It is suppressed by third-party framing.
 - **Asking is not sharing.** *"what is the exact address?"* is a question; *"the address is…"* is a disclosure.
 
+<!--
+📸 SCREENSHOT #3 — Safety moderation in action
+What: two messages side by side (or stacked) in the playground —
+  1. "fuck off" or a hostility example → BLOCKED, showing the hostility
+     category in the technical-details panel
+  2. "someone messaged me on whatsapp claiming to be you" → DELIVERED,
+     showing "Nothing concerning found" or the report-framing note
+Why here: proves the report-vs-commit distinction visually — the exact
+inversion that was manually tested and fixed (§5), shown working correctly.
+-->
+
 ---
 
 ## 4. Trade-offs I made deliberately
@@ -131,6 +165,30 @@ Two distinctions that took real work:
 I built a benchmark. It reported **precision 1.0000, 0.00% friction**. Every target green.
 
 Then I used the playground by hand, and it blocked `thanks, see you on the 9th!`
+
+<!--
+📸 SCREENSHOT #4 — The bug, caught live (most important screenshot in this doc)
+What: the playground conversation view showing an innocent message like
+"thanks, see you on the 9th!" flagged/blocked, with the technical-details
+panel open showing the (now-fixed) bogus reasoning — e.g. a stale risk
+contribution or a "combined with an earlier message" note on a message
+with no digits in it.
+If the bug is already fixed in the live build: either (a) screen-record the
+BEFORE state from local history before pushing the fix, or (b) skip this
+one and instead show the AFTER state — the same message now correctly
+delivered — and describe the before/after in the surrounding prose.
+Why here: this is the section you told them to read first. A screenshot of
+the dashboard being wrong is more convincing than any paragraph describing it.
+-->
+
+<!--
+📸 SCREENSHOT #5 — Green benchmark output
+What: terminal screenshot of `pnpm bench` output — the precision/recall/
+friction table showing PASS across the board.
+Why here: pairs with #4. "Here's the dashboard that said everything was
+fine" right next to "here's the bug it missed" is the whole argument in
+two images.
+-->
 
 The dashboard was wrong. Not slightly — **structurally**. All 1,000 hard negatives were scored through the stateless code path, which hardcodes `digitPressure: 0`. The friction metric was measuring a path on which the bug *could not occur*. It was not a wrong number; it was a number answering a different question than the one it appeared to answer.
 
@@ -165,6 +223,16 @@ Reproduced by `pnpm bench` on every run. 2,088 labelled messages, 3,088 evaluati
 | Resolved ≤ Tier 3 | **91.00%** | ≥ 92% |
 
 `confusion: tp 1087 · fp 0 · tn 2000 · fn 1`
+
+<!--
+📸 SCREENSHOT #6 — Full benchmark run + test suite
+What: two terminal screenshots (or one scrolling capture) —
+  1. `pnpm bench` full output: overall metrics, per-technique recall table,
+     tier distribution, latency percentiles
+  2. `pnpm test` output showing "259 passed"
+Why here: this is the "show your work" section — pairs the narrative
+results table above with the actual raw output it was copied from.
+-->
 
 **259 tests. Typecheck clean across three packages.**
 
