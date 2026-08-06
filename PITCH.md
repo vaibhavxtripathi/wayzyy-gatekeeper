@@ -10,21 +10,21 @@ Suggested message: their own benchmark string —
   "hi i a92m a121ksh35ay call me on nine eight 7 six zero"
 Why here: first thing a reviewer sees. Proves the demo is real and working
 before they read a word of the argument below.
--->
+--> 
 
 ---
 
 ## TL;DR
 
-**A five-tier cost-descending cascade for guest–host chat.** Each tier is cheaper and more certain than the one after it; a message stops at the first tier that can decide it. 91% never reach a model, and 99.97% never reach an LLM.
+**A five-tier cost-descending cascade for guest–host chat.** Each tier is cheaper and more certain than the one after it; a message stops at the first tier that can decide it. 91% never reach a model, and 99.74% never reach an LLM.
 
 | | |
 |---|---|
 | **Precision / Recall** | 1.0000 / 0.9991 |
 | **Friction** (legit blocked) | **0.00%** — 1,000 hard negatives, each evaluated twice (stateless + as a conversation) = 2,000 evaluations, 0 false positives |
 | **p95 latency** | **~0.9 ms** (target ≤ 25 ms) |
-| **Cost / 100k messages** | **$0.0007** — 1 message in 3,088 reaches the LLM. ~2,970× cheaper than an LLM on every message ($2.08/100k) |
-| **Tests** | 259, typecheck clean, 3,088 evaluations |
+| **Cost / 100k messages** | **$0.0054** — 8 messages in 3,088 reach the LLM. ~385× cheaper than an LLM on every message ($2.08/100k) |
+| **Tests** | 261, typecheck clean, 3,088 evaluations |
 
 Both benchmark strings from your brief block correctly:
 
@@ -39,7 +39,7 @@ Both benchmark strings from your brief block correctly:
 
 2. **Safety is scored separately from contact risk**, so post-booking can relax contact rules without relaxing hostility or extortion. Reporting a scam is distinguished from committing one; asking about an address is distinguished from sharing one. (§3)
 
-3. **My benchmark said precision 1.0000 and 0.00% friction — and it was structurally wrong.** All 1,000 hard negatives ran through a code path where the bug I had *couldn't* occur. Manual testing caught it; the dashboard never would have. Nine root causes were hiding behind that green. **If you read one section, read §5.**
+3. **My benchmark said precision 1.0000 and 0.00% friction — and it was structurally wrong.** All 1,000 hard negatives ran through a code path where the bug I had *couldn't* occur. Manual testing caught it; the dashboard never would have. Ten root causes were hiding behind that green — the last one a phone number delivered in full because it was sent one digit per message. **If you read one section, read §5.**
 
 **Honest caveat:** the corpus is synthetic. Precision 1.0000 means the engine handles the evasions I thought to write down — a measure of my imagination as much as its coverage. (§6)
 
@@ -70,9 +70,9 @@ Tier 4  Classifier     logistic regression, 3.2k weights               free   ~0
 Tier 5  LLM            Groq llama-3.1-8b, cached, 1200ms timeout   $0.0000208
 ```
 
-**Measured distribution:** 53.66% resolve at Tier 1, 37.34% at Tier 3, 9.00% at Tier 4, **0.03% reach the LLM.**
+**Measured distribution:** 53.66% resolve at Tier 1, 37.34% at Tier 3, 9.00% at Tier 4, **0.26% reach the LLM.**
 
-The design principle: *spend nothing on the easy cases.* A valid phone number is unambiguous — it should never cost an LLM call. The LLM exists only for genuine ambiguity, which is 3 messages in 10,000.
+The design principle: *spend nothing on the easy cases.* A valid phone number is unambiguous — it should never cost an LLM call. The LLM exists only for genuine ambiguity, which is 26 messages in 10,000 on this corpus.
 
 ### Why a cascade rather than one model
 
@@ -192,7 +192,7 @@ two images.
 
 The dashboard was wrong. Not slightly — **structurally**. All 1,000 hard negatives were scored through the stateless code path, which hardcodes `digitPressure: 0`. The friction metric was measuring a path on which the bug *could not occur*. It was not a wrong number; it was a number answering a different question than the one it appeared to answer.
 
-Nine root causes were hiding behind it — full writeup in `REPORT.md` §8. The three worth naming here:
+Ten root causes were hiding behind it — full writeup in `REPORT.md` §8. The four worth naming here:
 
 **Unbounded relationship state.** `digitPressure` counted raw digits and was added linearly with no ceiling. Ten turns of ordinary booking chat — dates, prices, guest counts — reached 11.9 against a block band of 8.0. Every subsequent message was convicted by arithmetic, whatever it said. *Fix: the term saturates below the allow band, so carryover can corroborate but never decide.*
 
@@ -200,7 +200,9 @@ Nine root causes were hiding behind it — full writeup in `REPORT.md` §8. The 
 
 **A missing word.** The hostility lexicon had `cunt`, `bitch`, `madarchod` — and not one form of the most common English profanity. `grep -r` returned zero hits across the engine *and the corpus*. So `fuck off` was delivered as "Nothing concerning found" while `you people are useless` blocked. Because the corpus omitted it too, the reported **100% hostility recall was measured against a corpus that never tested for it.**
 
-**What I changed structurally:** hard negatives are now replayed as *conversations*, not just single messages, so accumulated state is exercised the way production exercises it. That harness change immediately caught a ninth bug I had not seen by hand — two flight codes (`G81104`, `G89892`) merging into `8110489892`, a valid mobile nobody sent.
+**Single digits were invisible to the entire cascade.** Found last, and by hand again: send a phone number one digit per message — `"9"`, `"8"`, `"7"` … — and every message delivered clean. The digit-run extractor defaulted to a 2-character minimum, and Tier 3's own fragment check independently required 3, so a lone digit produced nothing for either layer to see. Two defensible filters, each fine alone, compounding into a message with no digits *shorter than the minimum they were built to ignore*. No adversarial technique in the corpus tested this shape — every scripted digit-splitting case split a number *within* one message, never one digit per turn — so recall never caught it either. *Fix: both floors removed; a bare digit with no explaining neighbour is now buffered like any other fragment, and `BENIGN_NEIGHBOURS` — the same mechanism that already exempts "2 adults" — does the actual filtering.*
+
+**What I changed structurally:** hard negatives are now replayed as *conversations*, not just single messages, so accumulated state is exercised the way production exercises it. That harness change immediately caught a bug I had not seen by hand — two flight codes (`G81104`, `G89892`) merging into `8110489892`, a valid mobile nobody sent.
 
 Every fix is verified load-bearing: I reverted each one and confirmed a specific test fails.
 
@@ -218,8 +220,8 @@ Reproduced by `pnpm bench` on every run. 2,088 labelled messages — 1,088 adver
 | Recall | **0.9991** | ≥ 0.97 |
 | Friction (legit blocked) | **0.00%** | ≤ 0.50% |
 | p95 latency | **0.90 ms** | ≤ 25 ms |
-| Reaches Tier 5 | **0.03%** | ≤ 2% |
-| Cost / 100k | **$0.0007** | ≤ $0.15 |
+| Reaches Tier 5 | **0.26%** | ≤ 2% |
+| Cost / 100k | **$0.0054** | ≤ $0.15 |
 | Resolved ≤ Tier 3 | **91.00%** | ≥ 92% |
 
 `confusion: tp 1087 · fp 0 · tn 2000 · fn 1`
@@ -229,12 +231,12 @@ Reproduced by `pnpm bench` on every run. 2,088 labelled messages — 1,088 adver
 What: two terminal screenshots (or one scrolling capture) —
   1. `pnpm bench` full output: overall metrics, per-technique recall table,
      tier distribution, latency percentiles
-  2. `pnpm test` output showing "259 passed"
+  2. `pnpm test` output showing "261 passed"
 Why here: this is the "show your work" section — pairs the narrative
 results table above with the actual raw output it was copied from.
 -->
 
-**259 tests. Typecheck clean across three packages.**
+**261 tests. Typecheck clean across three packages.**
 
 **21 of 22 evasion techniques at 100% recall** — noise injection, mixed-form, word-numbers (en/hi/devanagari), leet, unicode confusables, zero-width, separators, digit-splitting, spelled-email, handle-smuggling, UPI, spoken-URL, shorteners, pure-intent, extortion, hostility, scam-link, prompt-injection.
 
@@ -260,7 +262,7 @@ That is also why the cascade is built to be tuned rather than retrained: weights
 - **Rate limiting** per sender per conversation, anti threshold-probing.
 - **Async mode** — deliver-then-redact for zero user-facing latency.
 
-**Scaling:** stateless per message except the session store, so it scales horizontally. At 100k messages/day the projected LLM spend is **$0.0007** — 0.03% of traffic (1 in 3,088 messages) × $0.0000208/call. Cache hits reduce this further in production.
+**Scaling:** stateless per message except the session store, so it scales horizontally. At 100k messages/day the projected LLM spend is **$0.0054** — 0.26% of traffic (8 in 3,088 messages) × $0.0000208/call. Cache hits reduce this further in production.
 
 ---
 
@@ -272,7 +274,7 @@ That is also why the cascade is built to be tuned rather than retrained: weights
 | **Repo** | `github.com/vaibhavxtripathi/wayzyy-gatekeeper` *(private — happy to add reviewers)* |
 | **Video walkthrough** | *(add before submitting)* |
 
-`README.md` covers setup; `REPORT.md` is the full engineering log — 25 defects found and fixed across the whole build, of which the 9 in §5/§8 here are the ones the benchmark itself failed to catch.
+`README.md` covers setup; `REPORT.md` is the full engineering log — 26 defects found and fixed across the whole build, of which the 10 in §5/§8 here are the ones the benchmark itself failed to catch.
 
 ---
 

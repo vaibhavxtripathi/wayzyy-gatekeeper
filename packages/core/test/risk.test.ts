@@ -928,3 +928,49 @@ describe("a recovered number is acted on once, not forever", () => {
     expect(second.signals["merged_fragments"]).toBe("9123456789");
   });
 });
+
+describe("single digits are not invisible to fragment merging", () => {
+  /**
+   * extractDigitRuns defaults to minLength: 2 (digitruns.ts). normalize()
+   * called it with no override, so a lone digit like "3" produced ZERO
+   * DigitRuns — invisible to phone detection, fragment buffering and digit
+   * pressure alike. A guest could leak a full number by sending it one digit
+   * per message ("9", "8", "7", ...) and every message delivered as
+   * "Nothing concerning found," because there was nothing in the pipeline's
+   * output for Tier 3 to look at. Found manually: a demo conversation of
+   * single-digit replies sailed through entirely.
+   */
+  it("catches a valid phone number split one digit per message", async () => {
+    const store = new MemorySessionStore();
+    const digits = "9876543210".split("");
+    let last: Awaited<ReturnType<typeof moderateStateful>> | undefined;
+
+    for (const [i, d] of digits.entries()) {
+      last = await moderateStateful(req(d, { message_id: `sd${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+    }
+
+    expect(last?.verdict).toBe("block");
+    expect(last?.signals["merged_fragments"]).toBe("9876543210");
+  });
+
+  it("does not turn ordinary single-digit replies into fragments on their own", async () => {
+    // A single "2" answering "how many guests?" must not itself start
+    // accumulating toward a merge — BENIGN_NEIGHBOURS still does its job.
+    const store = new MemorySessionStore();
+    const conversation = ["how many guests?", "2", "and kids?", "1"];
+
+    for (const [i, text] of conversation.entries()) {
+      const result = await moderateStateful(req(text, { message_id: `og${i}` }), {
+        store,
+        trigramModel: MODEL,
+        nowMs: T0 + i * 1000,
+      });
+      expect(result.verdict, `"${text}" was actioned`).toBe("allow");
+      expect(result.signals["merged_fragments"]).toBeUndefined();
+    }
+  });
+});

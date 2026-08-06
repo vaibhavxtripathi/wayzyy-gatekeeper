@@ -33,7 +33,18 @@ export function normalize(raw: string): NormalizedViews {
   // Runs are found on the denoised view, whose offsets have shifted wherever
   // noise digits were removed. Translate them back so every span this module
   // publishes indexes into `raw` — the policy layer masks the original text.
-  const digitRuns = extractDigitRuns(denoised).map((run) => ({
+  //
+  // minLength: 1. extractDigitRuns defaults to 2, which silently dropped every
+  // single-digit message ("3", "9", "8"...) before it ever became a DigitRun —
+  // invisible to phone detection, fragment buffering and digit pressure alike.
+  // A guest could leak a full number by sending it one digit per message and
+  // every message delivered as "Nothing concerning found," because there was
+  // nothing in the pipeline's output for Tier 3 to even look at. Tier 3's own
+  // fragment-plausibility check already filters out ordinary single-digit
+  // replies ("how many guests?" -> "2") by requiring the run sit apart from an
+  // explaining word; dropping them one step earlier, before that check could
+  // even run, was a stronger and unintended filter.
+  const digitRuns = extractDigitRuns(denoised, { minLength: 1 }).map((run) => ({
     ...run,
     sourceSpan: {
       start: offsetMap[run.sourceSpan.start] ?? run.sourceSpan.start,

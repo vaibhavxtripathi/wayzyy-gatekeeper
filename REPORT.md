@@ -10,11 +10,11 @@ and is left failing deliberately (§3).
 | Recall | **0.9991** | ≥ 0.97 | PASS |
 | Friction (legit blocked) | **0.00%** | ≤ 0.50% | PASS |
 | p95 latency | **0.85 ms** | ≤ 25 ms | PASS |
-| Reaches Tier 5 | **0.03%** | ≤ 2% | PASS |
-| Cost / 100k messages | **$0.0007** | ≤ $0.15 | PASS |
+| Reaches Tier 5 | **0.26%** | ≤ 2% | PASS |
+| Cost / 100k messages | **$0.0054** | ≤ $0.15 | PASS |
 | Resolved at ≤ Tier 3 | **91.00%** | ≥ 92% | FAIL — see §3 |
 
-259 tests passing (250 core + 9 server). Three packages, typecheck clean.
+261 tests passing (252 core + 9 server). Three packages, typecheck clean.
 Corpus: 2,088 labelled messages, evaluated over **3,088 runs** — every hard
 negative is scored twice, once standalone and once replayed through a shared
 conversation (see §2). Every number here is reproduced by `pnpm bench`.
@@ -95,7 +95,7 @@ ordinary chat, and the `call it a day` intent trap.
 | 1 — Normalize | 53.66% | free |
 | 3 — Risk | 37.34% | free |
 | 4 — Classifier | 9.00% | free |
-| 5 — LLM | **0.03%** | $0.0000208/call |
+| 5 — LLM | **0.26%** | $0.0000208/call |
 
 Tier 4's share fell from 12.29% because removing the leaked `riskScore`
 feature (§8.3) stopped it from claiming messages it was never deciding on
@@ -134,13 +134,16 @@ doing their job. That reading was wrong, and worth stating plainly:
   "thanks, see you on the 14th". 238 of 244 band messages scored above 0.85.
   Nothing could land in the 0.3–0.85 uncertain range that routes to Tier 5.
 
-Both are fixed, and the figure is no longer zero: **0.03%** of traffic now
-reaches Tier 5. That is one message — a genuinely ambiguous one — but it is
-the first time the top of the cascade is exercised by the corpus rather than
-being unreachable by construction. It moved off zero only once the corpus
-gained coarse-register negatives (§8.8), which is the point: the band was
-empty because the corpus had no genuinely borderline traffic in it, not
-because the cheap tiers were resolving everything on merit.
+Both are fixed, and the figure is no longer zero: **0.26%** of traffic now
+reaches Tier 5 — 8 of 3,088 evaluations. It is the first time the top of the
+cascade is exercised by the corpus rather than being unreachable by
+construction. It moved off zero in two steps: first when the corpus gained
+coarse-register negatives (§8.8), then again after §8.10 fixed single digits
+being invisible to Tier 3 entirely — some of the newly-visible digit-splitting
+attempts land in genuine ambiguity rather than a clean block. The point stands
+either way: the band was empty because the corpus had no genuinely borderline
+traffic reaching Tier 3 at all, not because the cheap tiers were resolving
+everything on merit.
 
 Tier 5 is also covered end-to-end through `moderateStateful` with an injected
 transport, returning `resolved_by: tier5.llm` and a real cost figure.
@@ -149,10 +152,10 @@ transport, returning `resolved_by: tier5.llm` and a real cost figure.
 
 ## 4. Defects found and fixed
 
-Twenty-five real bugs, each of which passed typecheck and the existing tests at
+Twenty-six real bugs, each of which passed typecheck and the existing tests at
 the time. Listed because the *method* that caught them is the transferable
 part: benchmarking early, rendering the UI, running the red team live — and,
-for the last ten, trusting manual testing over a green dashboard.
+for the last eleven, trusting manual testing over a green dashboard.
 
 | Step | Defect | Why it mattered |
 |---|---|---|
@@ -181,8 +184,9 @@ for the last ten, trusting manual testing over a green dashboard.
 | 13 | **"chat on WhatsApp instead" was delivered** | The lexicon covered "dm me on whatsapp" but not the natural phrasing; a host proposing to move off-platform scored 2.0 and was delivered (§8.7) |
 | 13 | **Profanity was absent from the lexicon entirely** | "fuck off" delivered as "Nothing concerning found." while "you people are useless" blocked. The corpus omitted the word too, so 100% hostility recall never tested for it (§8.8) |
 | 13 | **All 1,000 hard negatives were scored statelessly** | `moderate()` hardcodes `digitPressure: 0`, so the 0.00% friction figure measured a path on which the bug cannot occur (§8.9) |
+| 13 | **Single digits were invisible to the entire cascade** | A phone number sent one digit per message delivered in full — Tier 1's digit-run extractor silently dropped runs under 2 digits, and Tier 3's own fragment gate independently required 3+ (§8.10) |
 
-The last ten were found by taking the manual-testing reports seriously when
+The last eleven were found by taking the manual-testing reports seriously when
 they contradicted a green benchmark. That is the transferable part here: the
 report was green because it was asking the wrong question, and no amount of
 re-reading the passing numbers would have revealed it.
@@ -289,10 +293,14 @@ apart and stopping at the tier that decided it.
 ## 8. Why manual testing kept failing while the metrics said 0%
 
 Manual testing showed messages blocked wholesale, almost nothing reaching the
-LLM, and the risk model flagging plainly innocent text. The benchmark reported
-precision 1.0000 and 0.00% friction. The benchmark was wrong. Nine distinct
-root causes (§8.1-§8.9, one producing two separate fixes — ten rows in the
-table above), each independently verified by reproduction before fixing.
+LLM, plainly innocent text flagged — and, found last, a full phone number
+delivered untouched because it was sent one digit per message. The benchmark
+reported precision 1.0000 and 0.00% friction throughout. The benchmark was
+wrong. Ten distinct root causes (§8.1-§8.10, one producing two separate
+fixes — eleven rows in the table above), each independently verified by
+reproduction before fixing. The corpus's own digit-splitting generator only
+ever split a number WITHIN one message; nothing in it exercised a number
+split ACROSS messages one digit at a time, which is why recall never caught it.
 
 ### 8.1 Digit pressure grew without bound — the primary cause
 
@@ -525,7 +533,56 @@ evidence.* Both gaps are now closed by measurement, not by assertion — the
 conversational replay exercises the stateful path the product actually uses,
 and it is what caught §8.4.
 
-### 8.10 Verification
+### 8.10 Single digits were invisible to the entire cascade
+
+Found by hand, in the playground, after all of the above: send a phone number
+one digit per message — `"9"`, `"8"`, `"7"` … — and every message delivered as
+"Nothing concerning found." Not masked, not scored, not merged. The number
+went out in full.
+
+```
+"9"   allow
+"8"   allow
+"7"   allow
+...
+"0"   allow   <- the tenth digit. still nothing.
+```
+
+The cause was two independent filters compounding, each defensible on its
+own and disastrous together:
+
+- `extractDigitRuns` (Tier 1) defaults to `minLength: 2`. `normalize()` called
+  it with no override, so a single digit produced **zero `DigitRun`s** — not a
+  low-confidence one, none at all. Invisible to the phone detector, to digit
+  pressure, to fragment buffering, because there was nothing in Tier 1's
+  output for any of them to see.
+- Tier 3's own `isPlausibleFragment` additionally required `digits.length >= 3`
+  before buffering a run as a fragment — a second, redundant gate that would
+  have blocked even a 1-2 digit run had Tier 1 produced one.
+
+Neither filter was wrong in isolation. The comment on the Tier 3 gate said
+"very short runs carry almost no information and are usually counts" — true
+of a *single* message read in isolation. It stops being true the instant
+someone sends many of them in a row on purpose, which is exactly what
+digit-splitting is.
+
+**Fix:** `extractDigitRuns(denoised, { minLength: 1 })` in Tier 1, and the
+length gate removed from Tier 3's fragment check. The filtering job it was
+doing is now done correctly by `BENIGN_NEIGHBOURS`: an isolated `"2"`
+answering *"how many guests?"* is still exempted, because the question that
+preceded it is in the neighbour window — the same mechanism that already
+protects `"iPhone 15 Pro 256GB"` and `G81104`-style identifiers. Length was a
+cruder proxy for the thing the neighbour check does properly.
+
+Verified: a real 10-digit IN mobile split one digit per message now blocks on
+the tenth message, reconstructing the exact number sent. The false-positive
+suite — single-digit replies to ordinary questions across five conversations —
+stays entirely clean; `pnpm bench` shows 0 false positives before and after.
+Tier 5 traffic moved from 0.03% to 0.26% as a direct, correct consequence:
+some newly-visible digit-splitting attempts are now genuinely ambiguous
+rather than invisible.
+
+### 8.11 Verification
 
 Each fix was confirmed to be load-bearing by reverting it and watching a
 specific test fail:
@@ -541,10 +598,11 @@ specific test fail:
 | Re-scan contribution check | `does not charge a re-scan phone to a message with no digits` |
 | Channel-move proximity rule | `catches a channel move however it is phrased` |
 | Profanity lexicon + sev0 band | `catches direct profanity and its inflections` |
+| `minLength: 1` + fragment length gate removed | `catches a valid phone number split one digit per message` |
 
 Net effect: recall **0.9981 → 0.9991**, precision holds at **1.0000**, friction
 **0.00% across 2,000 negatives** now including the stateful replay, and
-`resolved at ≤ tier 3` improves **87.71% → 91.00%**. 48 new tests.
+`resolved at ≤ tier 3` improves **87.71% → 91.00%**. 50 new tests (211 → 261).
 
 ---
 

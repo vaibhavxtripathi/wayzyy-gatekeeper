@@ -73,14 +73,20 @@ function isAlphanumericIdentifier(
  * explaining them. A flight number, a price or a clock time always travels
  * with a word that gives it meaning — and must never be buffered, or unrelated
  * fragments eventually assemble into a valid-looking mobile by chance.
+ *
+ * No length floor. A single digit ("9", "8", "7"...) is the most extreme
+ * split of all — a number sent one character per message — and used to be
+ * excluded here on the theory that it was "usually a count". That theory is
+ * exactly backwards for a message with NOTHING else in it: an isolated "2"
+ * answering "how many guests?" is caught below by BENIGN_NEIGHBOURS finding
+ * "guests" in the question that preceded it, which is the correct filter.
+ * A bare "9" with no explaining neighbour anywhere nearby has no innocent
+ * reading regardless of length, and length was doing weaker, redundant work.
  */
 function isPlausibleFragment(
   run: { digits: string; sourceSpan: { start: number; end: number } },
   views: NormalizedViews,
 ): boolean {
-  // Very short runs carry almost no information and are usually counts.
-  if (run.digits.length < 3) return false;
-
   const text = views.denoised;
 
   // Digits welded to a letter code are an identifier, not a fragment.
